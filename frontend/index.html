@@ -108,13 +108,6 @@ body {
   0%,100% { opacity: 1; } 50% { opacity: 0.4; }
 }
 
-/* ── Two-column layout for upload + result ── */
-.workspace {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 20px;
-}
-
 /* ── Upload card ── */
 .card {
   background: var(--panel);
@@ -147,7 +140,12 @@ body {
 .dropzone:hover, .dropzone.drag {
   border-color: var(--cyan); background: rgba(0,210,255,0.03);
 }
-.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+/* FIX: input must cover full dropzone area for click-to-upload to work */
+.dropzone input {
+  position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  width: 100%; height: 100%;
+  /* FIX: accept any audio type — was restricting to 5 extensions only */
+}
 .dz-icon {
   font-size: 36px; margin-bottom: 14px; display: block;
   filter: drop-shadow(0 0 12px rgba(0,210,255,0.4));
@@ -226,6 +224,15 @@ audio#player { width: 100%; height: 32px; display: none; }
   display: none; line-height: 1.5;
 }
 .api-warn.show { display: block; }
+
+/* ── Error message ── */
+.error-msg {
+  background: rgba(255,51,102,0.06); border: 1px solid rgba(255,51,102,0.2);
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 20px;
+  font-size: 12px; color: var(--red); font-family: var(--mono);
+  display: none; line-height: 1.5;
+}
+.error-msg.show { display: block; }
 
 /* ── Processing overlay ── */
 .processing {
@@ -480,14 +487,22 @@ footer span { color: var(--muted); }
     Start the server: <code>uvicorn api.server:app --port 8000</code>
   </div>
 
+  <!-- Error message -->
+  <div class="error-msg" id="errorMsg"></div>
+
   <!-- Upload card -->
   <div class="card" id="uploadCard">
     <div class="card-header">// Input — audio file</div>
     <div class="dropzone" id="dropzone">
-      <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a"/>
+      <!--
+        FIX: was accept=".wav,.mp3,.flac,.ogg,.m4a" which blocked .aac, .opus, .wma etc.
+        Now accepts audio/* (all audio MIME types) plus a broad extension fallback.
+        The backend validates the actual content, not just the extension.
+      -->
+      <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.wma,.aiff,.aif,.au,.amr,.webm,.3gp,.caf,.gsm"/>
       <span class="dz-icon">🎙</span>
       <div class="dz-title">Drop audio file here</div>
-      <div class="dz-sub">.wav · .mp3 · .flac · .ogg · .m4a &nbsp;·&nbsp; max 20 MB</div>
+      <div class="dz-sub">Any audio format · wav · mp3 · flac · ogg · m4a · aac · opus · wma · aiff · and more · max 50 MB</div>
     </div>
 
     <div class="or-div">or try a sample</div>
@@ -533,7 +548,7 @@ footer span { color: var(--muted); }
       <div class="proc-step" id="step0"><div class="proc-step-dot"></div>Loading audio signal</div>
       <div class="proc-step" id="step1"><div class="proc-step-dot"></div>Extracting MFCC features</div>
       <div class="proc-step" id="step2"><div class="proc-step-dot"></div>Computing spectral features</div>
-      <div class="proc-step" id="step3"><div class="proc-step-dot"></div>Analysing prosody & pitch</div>
+      <div class="proc-step" id="step3"><div class="proc-step-dot"></div>Analysing prosody &amp; pitch</div>
       <div class="proc-step" id="step4"><div class="proc-step-dot"></div>Running 3-model ensemble</div>
       <div class="proc-step" id="step5"><div class="proc-step-dot"></div>Computing explainability</div>
     </div>
@@ -632,25 +647,33 @@ footer span { color: var(--muted); }
     <div class="history-list" id="historyList"></div>
   </div>
 
-  <footer>VOICEGUARD v2.0 &nbsp;·&nbsp; <span>AIML Hackathon 2025</span> &nbsp;·&nbsp; MFCC · SPECTRAL · PROSODY</footer>
+  <footer>VOICEGUARD v2.2 &nbsp;·&nbsp; <span>AIML Hackathon 2026</span> &nbsp;·&nbsp; MFCC · SPECTRAL · PROSODY</footer>
 </div>
 </div>
 
 <script>
 /* ─── State ─────────────────────────────────────── */
-const API = 'http://localhost:8000';
+// FIX: Allow overriding API URL via ?api= query param for easy deployment
+const params = new URLSearchParams(window.location.search);
+const API = params.get('api') || 'http://localhost:8000';
 let currentFile = null, apiLive = false;
 let analysisHistory = [];
 
 /* ─── API health check ──────────────────────────── */
-fetch(`${API}/health`)
+// FIX: Added timeout so the page doesn't hang for 30s if server is unreachable
+const healthCtrl = new AbortController();
+const healthTimeout = setTimeout(() => healthCtrl.abort(), 4000);
+
+fetch(`${API}/health`, { signal: healthCtrl.signal })
   .then(r => {
+    clearTimeout(healthTimeout);
     if (r.ok) {
       apiLive = true;
       dot('live'); txt('Inference server online — real-time detection active');
     } else throw 0;
   })
   .catch(() => {
+    clearTimeout(healthTimeout);
     dot('offline'); txt('Server offline — demo simulation mode');
     show('apiWarn');
   });
@@ -663,6 +686,13 @@ const el    = id => document.getElementById(id);
 const show  = id => el(id).classList.add('show');
 const hide  = id => el(id).classList.remove('show');
 
+function showError(msg) {
+  const e = el('errorMsg');
+  e.textContent = '⚠ ' + msg;
+  e.classList.add('show');
+  setTimeout(() => e.classList.remove('show'), 6000);
+}
+
 /* ─── Drag & drop ───────────────────────────────── */
 const dz = el('dropzone');
 dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag'); });
@@ -674,6 +704,12 @@ dz.addEventListener('drop', e => {
 el('fileInput').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
 
 function loadFile(file) {
+  // FIX: removed client-side extension whitelist — backend validates content
+  // Only enforce size limit on client side to give instant feedback
+  if (file.size > 50 * 1024 * 1024) {
+    showError(`File too large (${(file.size/1024/1024).toFixed(1)} MB). Max: 50 MB`);
+    return;
+  }
   currentFile = file;
   const url = URL.createObjectURL(file);
   showWavePanel(url, file.name);
@@ -782,6 +818,7 @@ async function analyze() {
   if (!currentFile) return;
   const btn = el('analyzeBtn');
   btn.disabled = true;
+  hide('errorMsg');
   show('processing'); hide('result');
   startStepAnim();
 
@@ -791,8 +828,19 @@ async function analyze() {
     try {
       const r = await fetch(`${API}/predict`, { method: 'POST', body: form });
       data = await r.json();
-      if (!r.ok) throw new Error(data.detail);
-    } catch { data = simulateResult(currentFile.name); }
+      if (!r.ok) {
+        // FIX: show the actual server error instead of silently falling back to simulation
+        const errMsg = data.detail || JSON.stringify(data);
+        throw new Error(errMsg);
+      }
+    } catch (err) {
+      endStepAnim();
+      hide('processing');
+      btn.disabled = false;
+      showError('Server error: ' + err.message + ' — falling back to simulation.');
+      // Fallback to simulation so user still gets a result
+      data = simulateResult(currentFile.name);
+    }
   } else {
     await new Promise(r => setTimeout(r, 2800));
     data = simulateResult(currentFile._demo || currentFile.name);
@@ -801,8 +849,7 @@ async function analyze() {
   endStepAnim();
   await new Promise(r => setTimeout(r, 300));
   hide('processing');
-  showResult(data);
-  addHistory(data);
+  if (data) { showResult(data); addHistory(data); }
   btn.disabled = false;
 }
 
@@ -859,7 +906,6 @@ function showResult(data) {
   el('confPct').style.color = color;
   const arc = el('confArc');
   arc.style.stroke = color;
-  // circumference = 2π×39 ≈ 245
   setTimeout(() => { arc.style.strokeDashoffset = 245 * (1 - data.confidence); }, 50);
 
   // Score bars
@@ -876,7 +922,10 @@ function showResult(data) {
   el('statConf').textContent  = confPct + '%';
   el('statFeats').textContent = data.features;
   el('statMs').textContent    = data.processing_time_ms;
-  el('statFmt').textContent   = (data.filename || '').split('.').pop().toUpperCase();
+  // FIX: safely extract format extension even if filename has no dot
+  const fname = data.filename || '';
+  const dotIdx = fname.lastIndexOf('.');
+  el('statFmt').textContent = dotIdx >= 0 ? fname.slice(dotIdx + 1).toUpperCase() : '—';
 
   // Feature bars
   const feats = data.top_features || [];
@@ -916,7 +965,6 @@ function drawRadar(feats, isFake) {
   const angles = feats.map((_, i) => (i / n) * Math.PI * 2 - Math.PI / 2);
   const max = Math.max(...feats.map(f => f.weight));
 
-  // Grid rings
   [0.25, 0.5, 0.75, 1.0].forEach(t => {
     ctx.beginPath();
     angles.forEach((a, i) => {
@@ -928,7 +976,6 @@ function drawRadar(feats, isFake) {
     ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
   });
 
-  // Spokes
   angles.forEach(a => {
     ctx.beginPath();
     ctx.moveTo(cx, cy);
@@ -936,7 +983,6 @@ function drawRadar(feats, isFake) {
     ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
   });
 
-  // Data polygon
   const color = isFake ? '255,51,102' : '0,255,170';
   ctx.beginPath();
   feats.forEach((f, i) => {
@@ -949,7 +995,6 @@ function drawRadar(feats, isFake) {
   ctx.fillStyle = `rgba(${color},0.12)`; ctx.fill();
   ctx.strokeStyle = `rgba(${color},0.8)`; ctx.lineWidth = 1.5; ctx.stroke();
 
-  // Dots
   feats.forEach((f, i) => {
     const t = f.weight / max;
     const x = cx + Math.cos(angles[i]) * r * t;
@@ -958,7 +1003,6 @@ function drawRadar(feats, isFake) {
     ctx.fillStyle = `rgb(${color})`; ctx.fill();
   });
 
-  // Labels
   ctx.font = '9px JetBrains Mono, monospace';
   ctx.fillStyle = 'rgba(180,210,240,0.6)';
   ctx.textAlign = 'center';
@@ -983,7 +1027,6 @@ function drawSpectral(isFake) {
   const bars = Math.floor(W / (3 * dpr));
   for (let i = 0; i < bars; i++) {
     const x = i * 3 * dpr;
-    // Simulated spectral energy — fake audio has unnaturally regular peaks
     let energy;
     if (isFake) {
       energy = 0.5 + 0.45 * Math.sin(i * 0.18) + 0.05 * (Math.random() - 0.5);
@@ -1034,11 +1077,10 @@ function resetAll() {
   el('wavePanel').classList.remove('show');
   el('analyzeBtn').classList.remove('show');
   el('analyzeBtn').disabled = false;
-  hide('result'); hide('processing');
+  hide('result'); hide('processing'); hide('errorMsg');
   el('result').className = 'result';
   el('fileInput').value = '';
   el('player').src = '';
-  // reset arc
   el('confArc').style.strokeDashoffset = '245';
   el('realBar').style.width = '0%';
   el('fakeBar').style.width = '0%';

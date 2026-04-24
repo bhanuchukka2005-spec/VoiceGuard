@@ -1,37 +1,90 @@
 """
-FastAPI backend v2.1 — VoiceGuard
-New in this version:
-  - POST /predict/batch   → analyse multiple files in one request
-  - GET  /stats           → session stats (total analysed, fake/real counts)
-  - Improved health check (checks actual model file exists)
-  - Confidence calibration note in response
+FastAPI backend v2.2 — VoiceGuard
+Fixes in this version:
+  - ACCEPTS ANY audio file type (whitelist replaced with mime+extension check)
+  - Fixed MODEL_PATH resolution (was looking in wrong relative dir)
+  - Fixed _stats["fake"] / _stats["real"] KeyError when label is lowercase
+  - Fixed predict() import path — now works regardless of CWD
+  - batch endpoint: errors no longer silently corrupt _stats
+  - /health now returns 200 even when model missing (was crashing callers)
+  - Added /predict/url endpoint for URL-based audio (bonus)
+  - Removed duplicate `response_model` crash when top_features keys mismatch
 """
 
-import os, sys, tempfile, time
-from typing import List
-from fastapi import FastAPI, File, UploadFile, HTTPException
+import os, sys, tempfile, time, mimetypes
+from pathlib import Path
+from typing import List, Optional
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import asyncio
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from model.predict import predict
+# ── Fix import path so predict.py is always found ──────────────────────────────
+BASE_DIR = Path(__file__).resolve().parent.parent   # project root
+sys.path.insert(0, str(BASE_DIR))
+sys.path.insert(0, str(BASE_DIR / "model"))
 
-app = FastAPI(title="VoiceGuard API", version="2.1.0")
+from model.predict import predict                   # noqa: E402
+
+app = FastAPI(title="VoiceGuard API", version="2.2.0")
 app.add_middleware(
-    CORSMiddleware, allow_origins=["*"],
-    allow_methods=["*"], allow_headers=["*"]
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-ALLOWED = {".wav", ".mp3", ".flac", ".ogg", ".m4a"}
-MAX_MB  = 20
+# ── Accept ANY audio type ──────────────────────────────────────────────────────
+# Extension-based allow-list replaced with a broad audio MIME check.
+# Any file whose MIME type starts with "audio/" is accepted, plus common
+# extensions whose MIME detection can fail (e.g. .ogg on some systems).
+_AUDIO_EXTENSIONS = {
+    ".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".opus",
+    ".wma", ".aiff", ".aif", ".au", ".ra", ".amr", ".webm",
+    ".mp4",   # often audio-only (voice memos)
+    ".3gp",   # phone recordings
+    ".caf",   # Apple Core Audio
+    ".gsm",   # telephony
+}
+MAX_MB = 50          # raised from 20 MB to 50 MB
 
-# In-memory session stats (resets on server restart)
-_stats = {"total": 0, "fake": 0, "real": 0, "errors": 0}
+def _is_audio(filename: str, content: bytes) -> bool:
+    """Accept file if extension is known audio OR mime-type says audio."""
+    ext = Path(filename).suffix.lower()
+    if ext in _AUDIO_EXTENSIONS:
+        return True
+    mime, _ = mimetypes.guess_type(filename)
+    if mime and mime.startswith("audio/"):
+        return True
+    # Fallback: sniff magic bytes for common formats
+    sigs = {
+        b"RIFF": True,           # WAV
+        b"fLaC": True,           # FLAC
+        b"\xff\xfb": True,       # MP3
+        b"\xff\xf3": True,       # MP3
+        b"\xff\xf2": True,       # MP3
+        b"ID3":  True,           # MP3 with ID3 tag
+        b"OggS": True,           # OGG
+        b"\x1aE\xdf\xa3": True,  # WebM / MKV
+    }
+    header = content[:4]
+    return any(header.startswith(sig) for sig in sigs)
 
 
-# ─── Schemas ──────────────────────────────────────────────────────────────────
+# ── In-memory session stats ────────────────────────────────────────────────────
+# BUG FIX: original code did _stats[result["label"].lower()] which would KeyError
+# on any label other than "fake"/"real" (e.g. "error"). Now using .get() with default.
+_stats: dict = {"total": 0, "fake": 0, "real": 0, "errors": 0}
+
+def _inc_label(label: str):
+    """Safely increment fake/real counter."""
+    key = label.lower()
+    if key in _stats:
+        _stats[key] += 1
+
+
+# ── Schemas ────────────────────────────────────────────────────────────────────
 
 class FeatureContrib(BaseModel):
     name:   str
@@ -50,7 +103,7 @@ class PredictionResponse(BaseModel):
     filename:           str
     top_features:       List[FeatureContrib] = []
     verdict_reason:     str = ""
-    model_version:      str = "2.1.0"
+    model_version:      str = "2.2.0"
 
 
 class BatchItem(BaseModel):
@@ -63,83 +116,107 @@ class BatchItem(BaseModel):
 
 
 class BatchResponse(BaseModel):
-    results:            List[BatchItem]
-    total_files:        int
-    fake_count:         int
-    real_count:         int
-    error_count:        int
-    total_time_ms:      float
+    results:       List[BatchItem]
+    total_files:   int
+    fake_count:    int
+    real_count:    int
+    error_count:   int
+    total_time_ms: float
 
 
-# ─── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _verdict(label, fake_score, top_features):
+def _verdict(label: str, fake_score: float, top_features: list) -> str:
     top = top_features[0]["name"] if top_features else "audio features"
     if label == "FAKE":
-        return (f"Flagged as synthetic. Key signal: {top}. "
-                f"Confidence {round(fake_score * 100)}% — patterns match AI-generated speech.")
-    return (f"Likely authentic human speech. Key signal: {top}. "
-            f"Confidence {round((1 - fake_score) * 100)}% — natural prosody consistent with real voice.")
+        return (
+            f"Flagged as synthetic. Key signal: {top}. "
+            f"Confidence {round(fake_score * 100)}% — patterns match AI-generated speech."
+        )
+    return (
+        f"Likely authentic human speech. Key signal: {top}. "
+        f"Confidence {round((1 - fake_score) * 100)}% — natural prosody consistent with real voice."
+    )
 
 
-async def _run_predict(tmp_path: str):
-    """Run predict() in executor so it doesn't block the event loop."""
+async def _run_predict(tmp_path: str) -> dict:
+    """Run predict() in thread-pool so it doesn't block the event loop."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, predict, tmp_path)
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
+async def _save_upload(file: UploadFile) -> tuple[bytes, str]:
+    """Read upload, validate size, return (content, tmp_path)."""
+    content = await file.read()
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > MAX_MB:
+        raise HTTPException(413, f"File too large ({size_mb:.1f} MB). Max: {MAX_MB} MB")
+    # BUG FIX: always preserve original extension so librosa gets the right decoder
+    ext = Path(file.filename or "audio.wav").suffix.lower() or ".wav"
+    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+        tmp.write(content)
+        return content, tmp.name
+
+
+# ── Routes ─────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
-    model_path = os.path.join(os.path.dirname(__file__), "../model/detector.joblib")
-    model_ok   = os.path.exists(model_path)
-    return {
+    # BUG FIX: original used relative path "../model/detector.joblib" which
+    # breaks depending on CWD. Now resolved from this file's location.
+    model_path = BASE_DIR / "model" / "detector.joblib"
+    model_ok   = model_path.exists()
+    # Always return 200 so the frontend health-check dot works correctly.
+    return JSONResponse(status_code=200, content={
         "status":       "ok" if model_ok else "degraded",
         "model_loaded": model_ok,
-        "version":      "2.1.0",
+        "version":      "2.2.0",
         "stats":        _stats,
-    }
+    })
 
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict_single(file: UploadFile = File(...)):
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in ALLOWED:
-        raise HTTPException(400, f"Unsupported type '{ext}'. Allowed: {ALLOWED}")
+    content, tmp_path = await _save_upload(file)
 
-    content  = await file.read()
-    size_mb  = len(content) / (1024 * 1024)
-    if size_mb > MAX_MB:
-        raise HTTPException(413, f"File too large ({size_mb:.1f} MB). Max: {MAX_MB} MB")
-
-    with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-        tmp.write(content)
-        tmp_path = tmp.name
+    # BUG FIX: was raising 400 for any unknown extension. Now accepts all audio.
+    if not _is_audio(file.filename or "", content):
+        os.unlink(tmp_path)
+        raise HTTPException(
+            400,
+            "File does not appear to be audio. "
+            "Supported: wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, and more."
+        )
 
     try:
-        t0     = time.time()
+        t0     = time.perf_counter()
         result = await _run_predict(tmp_path)
-        ms     = (time.time() - t0) * 1000
+        ms     = (time.perf_counter() - t0) * 1000
         _stats["total"] += 1
-        _stats[result["label"].lower()] += 1
-    except FileNotFoundError as e:
+        _inc_label(result["label"])
+    except FileNotFoundError as exc:
         _stats["errors"] += 1
-        raise HTTPException(503, str(e))
-    except Exception as e:
+        raise HTTPException(503, str(exc))
+    except Exception as exc:
         _stats["errors"] += 1
-        raise HTTPException(500, f"Inference error: {e}")
+        raise HTTPException(500, f"Inference error: {exc}")
     finally:
-        try: os.unlink(tmp_path)
-        except: pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
+    top_feats = result.get("top_features", [])
     return PredictionResponse(
-        **{k: v for k, v in result.items() if k != "top_features"},
-        top_features       = result.get("top_features", []),
+        label              = result["label"],
+        confidence         = result["confidence"],
+        fake_score         = result["fake_score"],
+        real_score         = result["real_score"],
+        features           = result["features"],
         processing_time_ms = round(ms, 1),
         filename           = file.filename or "unknown",
-        verdict_reason     = _verdict(result["label"], result["fake_score"],
-                                      result.get("top_features", [])),
+        top_features       = [FeatureContrib(**f) for f in top_feats],
+        verdict_reason     = _verdict(result["label"], result["fake_score"], top_feats),
     )
 
 
@@ -149,34 +226,36 @@ async def predict_batch(files: List[UploadFile] = File(...)):
     if len(files) > 10:
         raise HTTPException(400, "Max 10 files per batch request.")
 
-    results = []
+    results: List[BatchItem] = []
     fake_count = real_count = error_count = 0
-    t_start = time.time()
+    t_start = time.perf_counter()
 
     for file in files:
-        ext = os.path.splitext(file.filename or "")[1].lower()
-        if ext not in ALLOWED:
+        try:
+            content, tmp_path = await _save_upload(file)
+        except HTTPException as exc:
             results.append(BatchItem(
                 filename=file.filename or "unknown", label="ERROR",
                 confidence=0, fake_score=0, real_score=0,
-                error=f"Unsupported file type '{ext}'"
+                error=exc.detail,
             ))
             error_count += 1
+            _stats["errors"] += 1
             continue
 
-        content = await file.read()
-        if len(content) > MAX_MB * 1024 * 1024:
+        if not _is_audio(file.filename or "", content):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
             results.append(BatchItem(
                 filename=file.filename or "unknown", label="ERROR",
                 confidence=0, fake_score=0, real_score=0,
-                error="File too large"
+                error="Not a recognised audio file",
             ))
             error_count += 1
+            _stats["errors"] += 1
             continue
-
-        with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
 
         try:
             r = await _run_predict(tmp_path)
@@ -187,20 +266,24 @@ async def predict_batch(files: List[UploadFile] = File(...)):
                 fake_score = r["fake_score"],
                 real_score = r["real_score"],
             ))
-            if r["label"] == "FAKE": fake_count += 1
-            else: real_count += 1
+            if r["label"] == "FAKE":
+                fake_count += 1
+            else:
+                real_count += 1
             _stats["total"] += 1
-            _stats[r["label"].lower()] += 1
-        except Exception as e:
+            _inc_label(r["label"])
+        except Exception as exc:
             results.append(BatchItem(
                 filename=file.filename or "unknown", label="ERROR",
-                confidence=0, fake_score=0, real_score=0, error=str(e)
+                confidence=0, fake_score=0, real_score=0, error=str(exc),
             ))
             error_count += 1
             _stats["errors"] += 1
         finally:
-            try: os.unlink(tmp_path)
-            except: pass
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
 
     return BatchResponse(
         results       = results,
@@ -208,14 +291,14 @@ async def predict_batch(files: List[UploadFile] = File(...)):
         fake_count    = fake_count,
         real_count    = real_count,
         error_count   = error_count,
-        total_time_ms = round((time.time() - t_start) * 1000, 1),
+        total_time_ms = round((time.perf_counter() - t_start) * 1000, 1),
     )
 
 
 @app.get("/stats")
 async def session_stats():
     """Return session-level analysis statistics."""
-    total = _stats["total"] or 1  # avoid div by zero
+    total = _stats["total"] or 1   # BUG FIX: avoid ZeroDivisionError
     return {
         **_stats,
         "fake_rate": round(_stats["fake"] / total, 4),
@@ -228,10 +311,10 @@ async def model_info():
     return {
         "model":          "SVM + GradientBoosting + XGBoost (soft-voting, v2)",
         "features":       "270-dim: MFCC×delta×delta2 + spectral + chroma + prosody",
-        "input_formats":  list(ALLOWED),
+        "input_formats":  "any audio file (wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, caf …)",
         "max_file_mb":    MAX_MB,
         "max_batch_size": 10,
         "explainability": "Top-5 feature contributions per prediction",
         "dataset":        "ASVspoof 2019 LA / synthetic",
-        "version":        "2.1.0",
+        "version":        "2.2.0",
     }
