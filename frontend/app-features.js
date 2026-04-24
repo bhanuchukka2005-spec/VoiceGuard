@@ -295,3 +295,169 @@ function initReveal(){
   const obs=new IntersectionObserver((entries)=>{entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible')})},{threshold:0.1});
   document.querySelectorAll('.reveal').forEach(el=>obs.observe(el));
 }
+
+/* ═══ 8. ANIMATED DNA (rotating) ═══ */
+let dnaAnimFrame=null, dnaRotation=0, dnaData=null, dnaIsFake=false;
+function drawDNAAnimated(){
+  if(!dnaData)return;
+  dnaRotation+=0.004;
+  const c=el('dnaCanvas');if(!c)return;
+  const W=220,H=220;c.width=W;c.height=H;
+  const ctx=c.getContext('2d'),cx=W/2,cy=H/2;
+  const feats=dnaData.top_features||[];
+  const conf=dnaData.confidence||0.5;
+  const col=dnaIsFake?[255,51,102]:[0,255,170];
+  const pulse=0.95+0.05*Math.sin(Date.now()*0.003);
+
+  // Outer ring with pulse
+  ctx.beginPath();ctx.arc(cx,cy,95*pulse,0,Math.PI*2);
+  ctx.strokeStyle=`rgba(${col},0.12)`;ctx.lineWidth=1;ctx.stroke();
+  // Second outer ring
+  ctx.beginPath();ctx.arc(cx,cy,100*pulse,0,Math.PI*2);
+  ctx.strokeStyle=`rgba(${col},0.06)`;ctx.lineWidth=0.5;ctx.stroke();
+
+  // Rotating DNA strands
+  for(let s=0;s<4;s++){
+    ctx.beginPath();
+    const strands=48;
+    for(let i=0;i<=strands;i++){
+      const angle=(i/strands)*Math.PI*2-Math.PI/2+dnaRotation*(s%2===0?1:-0.7);
+      const feat=feats[i%Math.max(feats.length,1)]||{weight:10};
+      const baseR=25+s*16;
+      const wobble=dnaIsFake?2+Math.sin(i*0.5)*1:6+Math.sin(i*1.7+s)*4;
+      const r=(baseR+feat.weight*wobble/10)*pulse;
+      const x=cx+Math.cos(angle)*r,y=cy+Math.sin(angle)*r;
+      i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+    }
+    ctx.closePath();
+    ctx.fillStyle=`rgba(${col},${0.02+s*0.015})`;ctx.fill();
+    ctx.strokeStyle=`rgba(${col},${0.15+s*0.1})`;ctx.lineWidth=1.2;ctx.stroke();
+  }
+
+  // Orbiting data points
+  feats.forEach((f,i)=>{
+    const angle=(i/feats.length)*Math.PI*2-Math.PI/2+dnaRotation*1.5;
+    const r=(35+f.weight*3)*pulse;
+    const x=cx+Math.cos(angle)*r,y=cy+Math.sin(angle)*r;
+    const glow=3+f.weight/6+Math.sin(Date.now()*0.005+i)*1;
+    // Glow
+    ctx.beginPath();ctx.arc(x,y,glow+4,0,Math.PI*2);
+    ctx.fillStyle=`rgba(${col},0.08)`;ctx.fill();
+    // Point
+    ctx.beginPath();ctx.arc(x,y,glow,0,Math.PI*2);
+    ctx.fillStyle=`rgba(${col},0.7)`;ctx.fill();
+    // Line to center
+    ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(x,y);
+    ctx.strokeStyle=`rgba(${col},0.06)`;ctx.lineWidth=0.5;ctx.stroke();
+  });
+
+  // Center circle with glow
+  const cPulse=22+2*Math.sin(Date.now()*0.004);
+  ctx.beginPath();ctx.arc(cx,cy,cPulse+8,0,Math.PI*2);
+  ctx.fillStyle=`rgba(${col},0.03)`;ctx.fill();
+  ctx.beginPath();ctx.arc(cx,cy,cPulse,0,Math.PI*2);
+  ctx.fillStyle=`rgba(${col},0.1)`;ctx.fill();
+  ctx.strokeStyle=`rgba(${col},0.5)`;ctx.lineWidth=1.5;ctx.stroke();
+  ctx.font='bold 14px JetBrains Mono';ctx.fillStyle=`rgb(${col})`;ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(Math.round(conf*100)+'%',cx,cy);
+
+  dnaAnimFrame=requestAnimationFrame(drawDNAAnimated);
+}
+// Override drawDNA to start animation
+const _origDrawDNA=drawDNA;
+drawDNA=function(data,isFake){
+  if(dnaAnimFrame)cancelAnimationFrame(dnaAnimFrame);
+  dnaData=data;dnaIsFake=isFake;
+  el('dnaLabel').textContent=isFake?'SYNTHETIC SIGNATURE — high symmetry detected':'ORGANIC SIGNATURE — natural asymmetry detected';
+  drawDNAAnimated();
+};
+
+/* ═══ 9. SOUND EFFECTS (Web Audio synthesis) ═══ */
+function playSound(type){
+  try{
+    const actx=new(window.AudioContext||window.webkitAudioContext)();
+    const osc=actx.createOscillator(),gain=actx.createGain();
+    osc.connect(gain);gain.connect(actx.destination);
+    if(type==='success'){osc.frequency.setValueAtTime(523,actx.currentTime);osc.frequency.setValueAtTime(659,actx.currentTime+0.1);osc.frequency.setValueAtTime(784,actx.currentTime+0.2);gain.gain.setValueAtTime(0.08,actx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.4);osc.start();osc.stop(actx.currentTime+0.4)}
+    else if(type==='warning'){osc.type='sawtooth';osc.frequency.setValueAtTime(220,actx.currentTime);osc.frequency.setValueAtTime(180,actx.currentTime+0.15);gain.gain.setValueAtTime(0.06,actx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.3);osc.start();osc.stop(actx.currentTime+0.3)}
+    else if(type==='click'){osc.frequency.setValueAtTime(800,actx.currentTime);gain.gain.setValueAtTime(0.04,actx.currentTime);gain.gain.exponentialRampToValueAtTime(0.001,actx.currentTime+0.05);osc.start();osc.stop(actx.currentTime+0.05)}
+  }catch(e){}
+}
+
+/* ═══ 10. REACTIVE PARTICLES ═══ */
+let particleColor=[0,210,255];
+function setParticleColor(r,g,b){particleColor=[r,g,b]}
+
+// Patch initParticles to use reactive color
+const _origInitParticles=initParticles;
+initParticles=function(){
+  const c=el('particleCanvas');if(!c)return;
+  const ctx=c.getContext('2d');
+  let W,H,particles=[];
+  function resize(){W=c.width=window.innerWidth;H=c.height=window.innerHeight}
+  resize();window.addEventListener('resize',resize);
+  for(let i=0;i<60;i++)particles.push({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*.3,vy:(Math.random()-.5)*.3,r:Math.random()*2+0.5,o:Math.random()*.3+.1});
+  function draw(){
+    requestAnimationFrame(draw);ctx.clearRect(0,0,W,H);
+    const[cr,cg,cb]=particleColor;
+    particles.forEach(p=>{
+      p.x+=p.vx;p.y+=p.vy;
+      if(p.x<0)p.x=W;if(p.x>W)p.x=0;if(p.y<0)p.y=H;if(p.y>H)p.y=0;
+      ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle=`rgba(${cr},${cg},${cb},${p.o})`;ctx.fill();
+    });
+    for(let i=0;i<particles.length;i++){
+      for(let j=i+1;j<particles.length;j++){
+        const dx=particles[i].x-particles[j].x,dy=particles[i].y-particles[j].y,d=Math.sqrt(dx*dx+dy*dy);
+        if(d<120){ctx.beginPath();ctx.moveTo(particles[i].x,particles[i].y);ctx.lineTo(particles[j].x,particles[j].y);ctx.strokeStyle=`rgba(${cr},${cg},${cb},${.06*(1-d/120)})`;ctx.lineWidth=.5;ctx.stroke()}
+      }
+    }
+  }
+  draw();
+};
+
+/* ═══ 11. CONFIDENCE COUNTER ANIMATION ═══ */
+function animateCounter(elId,target,duration=800){
+  const elem=el(elId);if(!elem)return;
+  const start=performance.now();const from=0;
+  function tick(now){
+    const t=Math.min((now-start)/duration,1);
+    const eased=1-Math.pow(1-t,3); // ease-out cubic
+    const val=Math.round(from+(target-from)*eased);
+    elem.textContent=val+'%';
+    if(t<1)requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+/* ═══ 12. SCREEN FLASH ON VERDICT ═══ */
+function flashScreen(isFake){
+  const flash=document.createElement('div');
+  flash.style.cssText=`position:fixed;inset:0;z-index:999;pointer-events:none;background:${isFake?'rgba(255,51,102,0.12)':'rgba(0,255,170,0.1)'};animation:flashFade 0.6s ease forwards`;
+  document.body.appendChild(flash);
+  setTimeout(()=>flash.remove(),700);
+}
+// Inject flash animation
+if(!document.getElementById('flashStyle')){
+  const s=document.createElement('style');s.id='flashStyle';
+  s.textContent='@keyframes flashFade{0%{opacity:1}100%{opacity:0}}';
+  document.head.appendChild(s);
+}
+
+/* ═══ PATCH showResult for new effects ═══ */
+const _origShowResult=showResult;
+showResult=function(data){
+  const isFake=data.label==='FAKE';
+  // Sound effect
+  playSound(isFake?'warning':'success');
+  // Flash
+  flashScreen(isFake);
+  // Reactive particles
+  if(isFake)setParticleColor(255,51,102);else setParticleColor(0,255,170);
+  // Reset particle color after 8s
+  setTimeout(()=>setParticleColor(0,210,255),8000);
+  // Call original
+  _origShowResult(data);
+  // Animate confidence counter
+  animateCounter('confPct',Math.round(data.confidence*100));
+  animateCounter('statConf',Math.round(data.confidence*100));
+};

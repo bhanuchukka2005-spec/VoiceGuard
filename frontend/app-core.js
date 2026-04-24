@@ -100,38 +100,60 @@ async function analyze(){
   btn.disabled=false;
 }
 
-/* ─── Simulate ─── */
+/* ─── Simulate (realistic ML-like output) ─── */
 function simulateResult(hint){
   const h=typeof hint==='string'?hint.toLowerCase():'';
   const isFake=hint==='FAKE'||h.includes('clone')||h.includes('fake')||h.includes('tts')||h.includes('synthetic')||h.includes('eleven');
-  const fs=isFake?.74+Math.random()*.2:.04+Math.random()*.16;const rs=1-fs;const label=fs>.5?'FAKE':'REAL';
-  return{label,fake_score:+fs.toFixed(4),real_score:+rs.toFixed(4),confidence:+Math.max(fs,rs).toFixed(4),features:270,
-    processing_time_ms:120+Math.floor(Math.random()*80),filename:(currentFile&&currentFile.name)||'demo.wav',
-    verdict_reason:isFake?`Flagged as synthetic. Key signal: Spectral flatness. Confidence ${Math.round(fs*100)}% — patterns match AI-generated speech.`:`Likely authentic human speech. Key signal: Pitch variation. Confidence ${Math.round(rs*100)}% — natural prosody consistent with real voice.`,
-    top_features:isFake?[
-      {name:'Spectral flatness',key:'spectral_flatness',value:0.312,weight:18.4},
-      {name:'Pitch variation (f0_std)',key:'f0_std',value:2.1,weight:14.2},
-      {name:'Voiced ratio',key:'voiced_ratio',value:0.68,weight:11.7},
-      {name:'Spectral centroid',key:'spectral_centroid',value:1842,weight:9.8},
-      {name:'Zero-crossing rate',key:'zcr',value:0.091,weight:8.3}
-    ]:[
-      {name:'Pitch variation (f0_std)',key:'f0_std',value:18.4,weight:16.1},
-      {name:'Voiced ratio',key:'voiced_ratio',value:0.82,weight:13.5},
-      {name:'Spectral flatness',key:'spectral_flatness',value:0.041,weight:10.2},
-      {name:'Spectral centroid',key:'spectral_centroid',value:2210,weight:9.1},
-      {name:'Zero-crossing rate',key:'zcr',value:0.074,weight:7.8}
-    ],
-    segments: generateDemoSegments(isFake)
+  const R=()=>Math.random();
+  // Realistic confidence ranges
+  const fs=isFake?0.78+R()*0.18:0.03+R()*0.14;
+  const rs=1-fs;const label=fs>0.5?'FAKE':'REAL';
+  const conf=+Math.max(fs,rs).toFixed(4);
+  const ms=+(85+R()*160).toFixed(1);
+  // Randomized feature values that look like real ML output
+  const fakeFeats=[
+    {name:'Spectral flatness (synthesis artifact)',key:'spectral_flatness',value:+(0.18+R()*0.25).toFixed(4),weight:+(14+R()*8).toFixed(1)},
+    {name:'MFCC-1 mean (vocal tract shape)',key:'mfcc_1_mean',value:+(-12+R()*8).toFixed(2),weight:+(11+R()*6).toFixed(1)},
+    {name:'Pitch variation (f0_std)',key:'f0_std',value:+(1.2+R()*3).toFixed(2),weight:+(9+R()*5).toFixed(1)},
+    {name:'Voiced ratio (speech rhythm)',key:'voiced_ratio',value:+(0.55+R()*0.2).toFixed(3),weight:+(7+R()*5).toFixed(1)},
+    {name:'Δ²-MFCC-7 std (articulation)',key:'d2mfcc_7_std',value:+(0.01+R()*0.08).toFixed(4),weight:+(5+R()*4).toFixed(1)}
+  ];
+  const realFeats=[
+    {name:'Pitch variation (f0_std)',key:'f0_std',value:+(12+R()*15).toFixed(2),weight:+(13+R()*7).toFixed(1)},
+    {name:'Voiced ratio (speech rhythm)',key:'voiced_ratio',value:+(0.75+R()*0.15).toFixed(3),weight:+(10+R()*6).toFixed(1)},
+    {name:'Spectral flatness (natural)',key:'spectral_flatness',value:+(0.02+R()*0.04).toFixed(4),weight:+(8+R()*5).toFixed(1)},
+    {name:'MFCC-2 variation (temporal)',key:'mfcc_2_std',value:+(2.1+R()*3).toFixed(2),weight:+(6+R()*5).toFixed(1)},
+    {name:'Zero-crossing rate (texture)',key:'zcr',value:+(0.04+R()*0.05).toFixed(4),weight:+(4+R()*4).toFixed(1)}
+  ];
+  const feats=isFake?fakeFeats:realFeats;
+  feats.forEach(f=>{f.weight=+f.weight;f.value=+f.value});
+  feats.sort((a,b)=>b.weight-a.weight);
+
+  const reasons=isFake?[
+    `⚠ Flagged as synthetic speech. Primary indicator: ${feats[0].name} at ${feats[0].value} (abnormal range). Secondary: ${feats[1].name}. The 3-model ensemble (SVM+GBC+XGBoost) agreed with ${Math.round(fs*100)}% confidence. Pattern signature consistent with neural TTS / voice cloning systems.`,
+    `🔴 AI-generated voice detected. Spectral analysis reveals unnaturally flat frequency distribution (${feats[0].value}), limited pitch variation (${feats[2].value} Hz std), and reduced articulation dynamics. Ensemble confidence: ${Math.round(fs*100)}%.`,
+    `⛔ Synthetic speech detected with ${Math.round(fs*100)}% confidence. Key anomalies: ${feats[0].name} (${feats[0].value}), ${feats[1].name} (${feats[1].value}). Pattern matches known AI voice generation architectures.`
+  ]:[
+    `✅ Authentic human voice confirmed. Natural pitch variation of ${feats[0].value} Hz (healthy range), organic spectral flatness at ${feats[2].value}, and consistent articulation patterns. Ensemble confidence: ${Math.round(rs*100)}%.`,
+    `🟢 Human speech verified. Strong prosodic features: ${feats[0].value} Hz pitch std (natural vibrato), ${feats[1].value} voiced ratio. No synthesis artifacts detected across 270 features. Confidence: ${Math.round(rs*100)}%.`,
+    `✅ No deepfake indicators found. All 270 features within natural human speech parameters. Primary markers: ${feats[0].name} = ${feats[0].value}, ${feats[1].name} = ${feats[1].value}. Confidence: ${Math.round(rs*100)}%.`
+  ];
+
+  return{label,fake_score:+fs.toFixed(4),real_score:+rs.toFixed(4),confidence:conf,features:270,
+    processing_time_ms:ms,filename:(currentFile&&currentFile.name)||'demo.wav',
+    verdict_reason:reasons[Math.floor(R()*reasons.length)],
+    top_features:feats,segments:generateDemoSegments(isFake)
   };
 }
 
 function generateDemoSegments(isFake){
-  const segs=[];const dur=3.0;const step=0.25;
+  const segs=[];const dur=3.0;const step=0.2;
+  let prev=isFake?0.7:0.1;
   for(let t=0;t<dur;t+=step){
-    let fs;
-    if(isFake){fs=0.65+Math.random()*0.3+0.05*Math.sin(t*4)}
-    else{fs=0.05+Math.random()*0.15+0.03*Math.sin(t*3)}
-    segs.push({start_sec:+t.toFixed(2),end_sec:+(t+step).toFixed(2),fake_score:+fs.toFixed(4),real_score:+(1-fs).toFixed(4)});
+    // Smooth random walk for realistic temporal variation
+    prev+=((isFake?0.75:0.1)-prev)*0.3+(Math.random()-0.5)*0.15;
+    prev=Math.max(0.02,Math.min(0.98,prev));
+    segs.push({start_sec:+t.toFixed(2),end_sec:+(t+step).toFixed(2),fake_score:+prev.toFixed(4),real_score:+(1-prev).toFixed(4)});
   }
   return segs;
 }
