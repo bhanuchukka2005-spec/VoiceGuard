@@ -319,4 +319,24 @@ function resetAll(){
 }
 
 /* ─── Init ─── */
-document.addEventListener('DOMContentLoaded',()=>{initDropzone();initParticles();initKeyboard();initReveal();loadHistory();});
+/* ─── Theme Toggle ─── */
+function toggleTheme(){
+  const isLight=document.body.classList.toggle('light');
+  el('themeIcon').textContent=isLight?'🌙':'☀️';
+  el('themeLabel').textContent=isLight?'Dark':'Light';
+  try{localStorage.setItem('vg_theme',isLight?'light':'dark')}catch(_){}
+  const hist=analysisHistory[0];
+  if(hist)drawSpectral(hist.label==='FAKE');
+}
+function loadTheme(){
+  try{
+    const saved=localStorage.getItem('vg_theme');
+    if(saved==='light'){
+      document.body.classList.add('light');
+      if(el('themeIcon'))el('themeIcon').textContent='🌙';
+      if(el('themeLabel'))el('themeLabel').textContent='Dark';
+    }
+  }catch(_){}
+}
+
+document.addEventListener('DOMContentLoaded',()=>{initDropzone();initParticles();initKeyboard();initReveal();loadHistory();loadTheme();});

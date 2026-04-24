@@ -304,3 +304,89 @@ footer span{color:var(--muted)}
 .stress-metric-desc{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.5}
 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:600px){.stress-overview{flex-direction:column;align-items:flex-start}}
+
+/* ═══ LIGHT THEME ═══ */
+body.light{
+  --bg:#f0f4f8;
+  --panel:rgba(255,255,255,0.85);
+  --panel2:#e8eef5;
+  --panel3:#dde5ef;
+  --border:rgba(0,130,180,0.15);
+  --border2:rgba(0,130,180,0.35);
+  --cyan:#0077aa;
+  --cyan-dim:rgba(0,119,170,0.12);
+  --green:#008844;
+  --red:#cc1144;
+  --amber:#b87000;
+  --text:#0a1520;
+  --muted:#5577aa;
+  --muted2:#99aacc;
+}
+body.light .bg-layer{
+  background:radial-gradient(ellipse 70% 50% at 20% 10%,rgba(0,100,200,0.07) 0%,transparent 60%),
+             radial-gradient(ellipse 50% 40% at 85% 80%,rgba(0,150,220,0.05) 0%,transparent 60%);
+}
+body.light .bg-grid{
+  background-image:linear-gradient(rgba(0,100,180,0.06) 1px,transparent 1px),
+                   linear-gradient(90deg,rgba(0,100,180,0.06) 1px,transparent 1px);
+  background-size:48px 48px;
+}
+body.light #particleCanvas{opacity:0.4}
+body.light .card{box-shadow:0 2px 16px rgba(0,80,160,0.07)}
+body.light .scores-card,body.light .explain-card,body.light .stats-card,
+body.light .spectral-card,body.light .timeline-card,body.light .dna-card,
+body.light .dashboard-card,body.light .history-card,body.light .stress-card{
+  box-shadow:0 2px 12px rgba(0,80,160,0.06);
+}
+body.light .verdict-banner.real{
+  background:linear-gradient(135deg,rgba(0,180,100,0.08),rgba(0,180,100,0.02),transparent);
+  box-shadow:0 0 24px rgba(0,180,100,0.07);
+}
+body.light .verdict-banner.fake{
+  background:linear-gradient(135deg,rgba(200,20,60,0.07),rgba(200,20,60,0.02),transparent);
+  box-shadow:0 0 24px rgba(200,20,60,0.07);
+}
+body.light .analyze-btn{
+  background:linear-gradient(135deg,#0077aa,#005588);
+  color:#ffffff;
+  box-shadow:0 4px 20px rgba(0,119,170,0.25);
+}
+body.light .analyze-btn:hover{box-shadow:0 6px 28px rgba(0,119,170,0.35)}
+body.light audio{filter:invert(1) hue-rotate(180deg)}
+
+/* ═══ THEME TOGGLE BUTTON ═══ */
+.header-top{
+  display:flex;align-items:center;gap:14px;margin-bottom:8px;
+  position:relative;
+}
+.theme-toggle{
+  margin-left:auto;
+  display:flex;align-items:center;gap:6px;
+  background:var(--panel2);
+  border:1px solid var(--border2);
+  border-radius:20px;
+  padding:6px 12px;
+  cursor:pointer;
+  font-family:var(--mono);
+  font-size:11px;
+  color:var(--text);
+  letter-spacing:0.5px;
+  transition:all .25s;
+  position:relative;
+  overflow:hidden;
+}
+.theme-toggle::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,var(--cyan-dim),transparent);
+  opacity:0;transition:opacity .25s;
+}
+.theme-toggle:hover::before{opacity:1}
+.theme-toggle:hover{
+  border-color:var(--cyan);
+  transform:translateY(-1px);
+  box-shadow:0 4px 14px rgba(0,210,255,0.15);
+}
+.theme-toggle:active{transform:translateY(0)}
+.theme-icon{font-size:14px;transition:transform .4s cubic-bezier(.34,1.56,.64,1)}
+.theme-toggle:hover .theme-icon{transform:rotate(20deg) scale(1.15)}
+.theme-label{color:var(--muted)}
