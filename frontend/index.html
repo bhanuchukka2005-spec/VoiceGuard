@@ -5,605 +5,1043 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>VoiceGuard — Audio Deepfake Detector</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;700&display=swap');
 
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-  :root {
-    --bg: #050a0e;
-    --surface: #0d1820;
-    --surface2: #132030;
-    --border: rgba(0,200,255,0.12);
-    --accent: #00c8ff;
-    --accent2: #00ff9c;
-    --danger: #ff4d6d;
-    --text: #e2eef5;
-    --muted: #6b8fa8;
-    --mono: 'Space Mono', monospace;
-    --sans: 'DM Sans', sans-serif;
-  }
+:root {
+  --bg: #03050a;
+  --panel: #080d14;
+  --panel2: #0c1520;
+  --panel3: #101c28;
+  --border: rgba(0,210,255,0.10);
+  --border2: rgba(0,210,255,0.22);
+  --cyan: #00d2ff;
+  --cyan-dim: rgba(0,210,255,0.18);
+  --green: #00ffaa;
+  --red: #ff3366;
+  --amber: #ffb700;
+  --text: #ddeeff;
+  --muted: #4a7090;
+  --muted2: #2a4560;
+  --mono: 'JetBrains Mono', monospace;
+  --sans: 'Syne', sans-serif;
+  --scan-speed: 2.4s;
+}
 
-  body {
-    background: var(--bg);
-    color: var(--text);
-    font-family: var(--sans);
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
+html { scroll-behavior: smooth; }
 
-  /* Grid noise overlay */
-  body::before {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(0,200,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(0,200,255,0.03) 1px, transparent 1px);
-    background-size: 40px 40px;
-    pointer-events: none;
-    z-index: 0;
-  }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
 
-  .wrap {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    max-width: 860px;
-    padding: 40px 24px 80px;
-  }
+/* ── Background ── */
+.bg-layer {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 50% at 20% 10%, rgba(0,100,200,0.08) 0%, transparent 60%),
+    radial-gradient(ellipse 50% 40% at 85% 80%, rgba(0,210,255,0.05) 0%, transparent 60%);
+}
+.bg-grid {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background-image:
+    linear-gradient(rgba(0,210,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,210,255,0.025) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
 
-  /* Header */
-  .header { text-align: center; margin-bottom: 48px; }
-  .logo {
-    font-family: var(--mono);
-    font-size: 11px;
-    letter-spacing: 4px;
-    color: var(--accent);
-    text-transform: uppercase;
-    margin-bottom: 16px;
-    opacity: 0.8;
-  }
-  .title {
-    font-size: clamp(32px, 5vw, 52px);
-    font-weight: 300;
-    letter-spacing: -1px;
-    line-height: 1.1;
-    margin-bottom: 12px;
-  }
-  .title strong { font-weight: 600; color: var(--accent); }
-  .subtitle {
-    font-size: 15px;
-    color: var(--muted);
-    max-width: 480px;
-    margin: 0 auto;
-    line-height: 1.6;
-  }
+/* ── Layout ── */
+.app { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr; min-height: 100vh; }
 
-  /* Drop zone */
-  .dropzone {
-    border: 1.5px dashed var(--border);
-    border-radius: 16px;
-    padding: 48px 32px;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    margin-bottom: 24px;
-    background: var(--surface);
-    position: relative;
-    overflow: hidden;
-  }
-  .dropzone:hover, .dropzone.drag { border-color: var(--accent); background: rgba(0,200,255,0.04); }
-  .dropzone-icon {
-    font-size: 40px;
-    margin-bottom: 16px;
-    display: block;
-    filter: grayscale(0.3);
-  }
-  .dropzone h3 { font-size: 17px; font-weight: 500; margin-bottom: 8px; }
-  .dropzone p { font-size: 13px; color: var(--muted); }
-  .dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.main-col {
+  max-width: 920px; width: 100%; margin: 0 auto;
+  padding: 48px 28px 100px;
+}
 
-  /* OR divider */
-  .or-row {
-    display: flex; align-items: center; gap: 16px;
-    color: var(--muted); font-size: 12px; letter-spacing: 2px;
-    margin-bottom: 24px;
-  }
-  .or-row::before, .or-row::after {
-    content: ''; flex: 1; height: 1px; background: var(--border);
-  }
+/* ── Header ── */
+.header { margin-bottom: 56px; }
+.header-top {
+  display: flex; align-items: center; gap: 14px; margin-bottom: 8px;
+}
+.logo-hex {
+  width: 40px; height: 40px; background: var(--cyan-dim);
+  border: 1px solid var(--border2); border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+.brand {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 5px;
+  color: var(--cyan); text-transform: uppercase; opacity: 0.7;
+}
+.headline {
+  font-size: clamp(38px, 6vw, 72px);
+  font-weight: 800; letter-spacing: -3px; line-height: 0.95;
+  margin-bottom: 20px;
+}
+.headline .word-real { color: var(--green); }
+.headline .word-fake { color: var(--red); }
 
-  /* Sample clips */
-  .samples-label {
-    font-size: 11px; letter-spacing: 3px; text-transform: uppercase;
-    color: var(--muted); margin-bottom: 12px;
-    font-family: var(--mono);
-  }
-  .samples { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 40px; }
-  .sample-btn {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 10px 16px;
-    font-size: 13px;
-    cursor: pointer;
-    transition: all 0.15s;
-    font-family: var(--sans);
-    display: flex; align-items: center; gap: 8px;
-  }
-  .sample-btn:hover { border-color: var(--accent); color: var(--accent); }
-  .sample-btn .tag {
-    font-size: 10px; font-family: var(--mono);
-    padding: 2px 6px; border-radius: 4px;
-    font-weight: 700; letter-spacing: 1px;
-  }
-  .tag.real { background: rgba(0,255,156,0.12); color: var(--accent2); }
-  .tag.fake { background: rgba(255,77,109,0.12); color: var(--danger); }
+.tagline {
+  font-size: 15px; color: var(--muted); line-height: 1.65;
+  max-width: 520px; font-weight: 400;
+  font-family: var(--mono);
+}
 
-  /* Waveform */
-  .audio-panel {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 24px;
-    margin-bottom: 24px;
-    display: none;
-  }
-  .audio-panel.visible { display: block; }
-  .audio-filename {
-    font-family: var(--mono); font-size: 12px;
-    color: var(--accent); margin-bottom: 16px; opacity: 0.8;
-  }
-  canvas#waveform {
-    width: 100%; height: 80px;
-    border-radius: 8px;
-    background: var(--surface2);
-    display: block;
-    margin-bottom: 16px;
-  }
-  audio#player { width: 100%; height: 36px; }
-  audio::-webkit-media-controls-panel { background: var(--surface2); }
+/* ── Status badge ── */
+.status-bar {
+  display: flex; align-items: center; gap: 10px;
+  font-family: var(--mono); font-size: 11px;
+  color: var(--muted); margin-top: 24px; margin-bottom: 0;
+}
+.status-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--muted2); flex-shrink: 0;
+  transition: background 0.3s;
+}
+.status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse-dot 2s infinite; }
+.status-dot.offline { background: var(--amber); }
+@keyframes pulse-dot {
+  0%,100% { opacity: 1; } 50% { opacity: 0.4; }
+}
 
-  /* Analyze button */
-  .analyze-btn {
-    width: 100%;
-    background: var(--accent);
-    color: #050a0e;
-    border: none;
-    border-radius: 12px;
-    padding: 16px;
-    font-size: 15px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-    font-family: var(--sans);
-    letter-spacing: 0.3px;
-    margin-bottom: 32px;
-    display: none;
-  }
-  .analyze-btn.visible { display: block; }
-  .analyze-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-  .analyze-btn:active { transform: translateY(0); }
-  .analyze-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+/* ── Two-column layout for upload + result ── */
+.workspace {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+}
 
-  /* Processing */
-  .processing {
-    text-align: center; padding: 40px;
-    display: none;
-  }
-  .processing.visible { display: block; }
-  .spinner {
-    width: 40px; height: 40px;
-    border: 2px solid var(--border);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-    margin: 0 auto 20px;
-  }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .processing p { color: var(--muted); font-size: 14px; font-family: var(--mono); }
+/* ── Upload card ── */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  overflow: hidden;
+  transition: border-color 0.3s;
+}
+.card:hover { border-color: var(--border2); }
+.card-header {
+  padding: 18px 24px 0;
+  font-family: var(--mono); font-size: 10px; letter-spacing: 3px;
+  color: var(--muted); text-transform: uppercase;
+}
 
-  /* Result */
-  .result {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
-    padding: 32px;
-    display: none;
-    animation: fadeUp 0.4s ease;
-  }
-  .result.visible { display: block; }
-  @keyframes fadeUp {
-    from { opacity: 0; transform: translateY(12px); }
-    to   { opacity: 1; transform: translateY(0); }
-  }
-  .result.real-result { border-color: rgba(0,255,156,0.3); }
-  .result.fake-result { border-color: rgba(255,77,109,0.3); }
+/* ── Drop zone ── */
+.dropzone {
+  margin: 16px; border: 1.5px dashed var(--border2); border-radius: 14px;
+  padding: 40px 24px; text-align: center; cursor: pointer;
+  transition: all 0.2s; background: var(--panel2); position: relative;
+  overflow: hidden;
+}
+.dropzone::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(0,210,255,0.04), transparent);
+  opacity: 0; transition: opacity 0.3s;
+}
+.dropzone:hover::before, .dropzone.drag::before { opacity: 1; }
+.dropzone:hover, .dropzone.drag {
+  border-color: var(--cyan); background: rgba(0,210,255,0.03);
+}
+.dropzone input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+.dz-icon {
+  font-size: 36px; margin-bottom: 14px; display: block;
+  filter: drop-shadow(0 0 12px rgba(0,210,255,0.4));
+}
+.dz-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+.dz-sub { font-size: 12px; color: var(--muted); font-family: var(--mono); }
 
-  .verdict-row {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 24px; flex-wrap: wrap; gap: 16px;
-  }
-  .verdict-badge {
-    font-family: var(--mono);
-    font-size: 42px; font-weight: 700;
-    letter-spacing: -1px;
-  }
-  .verdict-badge.real { color: var(--accent2); }
-  .verdict-badge.fake { color: var(--danger); }
-  .verdict-sub { font-size: 13px; color: var(--muted); margin-top: 4px; font-family: var(--mono); }
+.or-div {
+  display: flex; align-items: center; gap: 12px; padding: 0 16px 0;
+  font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 2px;
+}
+.or-div::before, .or-div::after { content: ''; flex: 1; height: 1px; background: var(--border); }
 
-  .confidence-ring-wrap { position: relative; width: 80px; height: 80px; }
-  .confidence-ring-wrap svg { width: 80px; height: 80px; }
-  .ring-val {
-    position: absolute; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    font-family: var(--mono); font-size: 14px; font-weight: 700;
-  }
+/* ── Samples ── */
+.samples-wrap { padding: 12px 16px 16px; }
+.samples-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sample-btn {
+  background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; cursor: pointer;
+  font-family: var(--sans); font-size: 12px; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+  transition: all 0.15s; text-align: left;
+}
+.sample-btn:hover { border-color: var(--cyan); }
+.stag {
+  font-family: var(--mono); font-size: 9px; font-weight: 700;
+  padding: 3px 6px; border-radius: 5px; letter-spacing: 1px; flex-shrink: 0;
+}
+.stag-r { background: rgba(0,255,170,0.12); color: var(--green); }
+.stag-f { background: rgba(255,51,102,0.12); color: var(--red); }
 
-  /* Score bars */
-  .scores { margin-bottom: 24px; }
-  .score-row { margin-bottom: 14px; }
-  .score-label-row {
-    display: flex; justify-content: space-between;
-    font-size: 12px; font-family: var(--mono);
-    color: var(--muted); margin-bottom: 6px;
-  }
-  .bar-track {
-    height: 6px; background: var(--surface2); border-radius: 3px; overflow: hidden;
-  }
-  .bar-fill {
-    height: 100%; border-radius: 3px;
-    transition: width 0.8s cubic-bezier(.4,0,.2,1);
-  }
-  .bar-real { background: var(--accent2); }
-  .bar-fake { background: var(--danger); }
+/* ── Waveform panel ── */
+.wave-panel {
+  padding: 16px; display: none;
+  border-top: 1px solid var(--border);
+}
+.wave-panel.show { display: block; }
+.wave-filename {
+  font-family: var(--mono); font-size: 11px; color: var(--cyan);
+  margin-bottom: 12px; opacity: 0.8; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+canvas#waveform {
+  width: 100%; height: 70px; display: block;
+  border-radius: 8px; background: var(--panel3); margin-bottom: 12px;
+}
+audio#player { width: 100%; height: 32px; display: none; }
 
-  /* Stats grid */
-  .stats {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;
-  }
-  .stat {
-    background: var(--surface2); border-radius: 10px; padding: 14px;
-  }
-  .stat-val { font-family: var(--mono); font-size: 18px; font-weight: 700; margin-bottom: 4px; }
-  .stat-label { font-size: 11px; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; }
+/* ── Analyze button ── */
+.analyze-btn {
+  display: none; width: calc(100% - 32px); margin: 0 16px 16px;
+  background: var(--cyan); color: #020810;
+  border: none; border-radius: 12px; padding: 15px;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  font-family: var(--sans); letter-spacing: 0.5px;
+  transition: opacity 0.2s, transform 0.1s;
+  position: relative; overflow: hidden;
+}
+.analyze-btn::after {
+  content: '';
+  position: absolute; top: -50%; left: -60%; width: 40%; height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
+  transform: skewX(-20deg);
+  animation: shine 2.5s infinite;
+}
+@keyframes shine { 0%,60% { left: -60%; opacity: 0; } 61% { opacity: 1; } 100% { left: 130%; opacity: 0; } }
+.analyze-btn.show { display: block; }
+.analyze-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+.analyze-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
 
-  /* Reset */
-  .reset-btn {
-    background: transparent; border: 1px solid var(--border);
-    color: var(--muted); border-radius: 8px; padding: 10px 20px;
-    cursor: pointer; font-size: 13px; margin-top: 20px;
-    font-family: var(--sans); transition: all 0.15s; display: block; width: 100%;
-  }
-  .reset-btn:hover { border-color: var(--accent); color: var(--accent); }
+/* ── API warning ── */
+.api-warn {
+  background: rgba(255,183,0,0.06); border: 1px solid rgba(255,183,0,0.2);
+  border-radius: 12px; padding: 14px 18px; margin-bottom: 20px;
+  font-size: 12px; color: var(--amber); font-family: var(--mono);
+  display: none; line-height: 1.5;
+}
+.api-warn.show { display: block; }
 
-  /* API warning */
-  .api-warning {
-    background: rgba(255,200,0,0.07); border: 1px solid rgba(255,200,0,0.2);
-    border-radius: 10px; padding: 14px 18px; margin-bottom: 24px;
-    font-size: 13px; color: #ffd166;
-    display: none;
-  }
-  .api-warning.visible { display: block; }
+/* ── Processing overlay ── */
+.processing {
+  display: none; padding: 48px 24px; text-align: center;
+}
+.processing.show { display: block; }
 
-  /* Footer */
-  .footer { text-align: center; margin-top: 60px; font-size: 12px; color: var(--muted); font-family: var(--mono); }
-  .footer span { color: var(--accent); }
+.scan-ring {
+  width: 100px; height: 100px; position: relative; margin: 0 auto 24px;
+}
+.scan-ring svg { width: 100%; height: 100%; }
+.scan-arc {
+  fill: none; stroke: var(--cyan); stroke-width: 2;
+  stroke-linecap: round;
+  stroke-dasharray: 200;
+  stroke-dashoffset: 200;
+  animation: scan-draw var(--scan-speed) ease-in-out infinite;
+}
+@keyframes scan-draw {
+  0%   { stroke-dashoffset: 200; opacity: 1; }
+  70%  { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+.scan-inner {
+  position: absolute; inset: 12px;
+  border-radius: 50%; border: 1px solid var(--border2);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 26px;
+}
+.scan-inner::after {
+  content: '';
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--cyan-dim), transparent, transparent);
+  animation: conic-spin var(--scan-speed) linear infinite;
+}
+@keyframes conic-spin { to { transform: rotate(360deg); } }
+
+.proc-steps { display: flex; flex-direction: column; gap: 6px; max-width: 300px; margin: 0 auto; }
+.proc-step {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  padding: 6px 12px; border-radius: 6px; background: var(--panel2);
+  border: 1px solid var(--border);
+  transition: all 0.3s; text-align: left;
+  display: flex; align-items: center; gap: 8px;
+}
+.proc-step.active {
+  color: var(--cyan); border-color: rgba(0,210,255,0.3);
+  background: rgba(0,210,255,0.05);
+}
+.proc-step.done { color: var(--green); border-color: rgba(0,255,170,0.15); }
+.proc-step-dot {
+  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
+  background: var(--muted2);
+  transition: background 0.3s;
+}
+.proc-step.active .proc-step-dot { background: var(--cyan); animation: pulse-dot 0.8s infinite; }
+.proc-step.done .proc-step-dot { background: var(--green); }
+
+/* ── Result card ── */
+.result {
+  display: none; animation: fadeUp 0.5s ease;
+}
+.result.show { display: block; }
+@keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+
+/* Verdict banner */
+.verdict-banner {
+  border-radius: 16px; padding: 28px 28px 24px;
+  margin-bottom: 20px; position: relative; overflow: hidden;
+  border: 1px solid;
+}
+.verdict-banner.real {
+  background: linear-gradient(135deg, rgba(0,255,170,0.04), transparent);
+  border-color: rgba(0,255,170,0.25);
+}
+.verdict-banner.fake {
+  background: linear-gradient(135deg, rgba(255,51,102,0.05), transparent);
+  border-color: rgba(255,51,102,0.3);
+}
+.verdict-banner::before {
+  content: '';
+  position: absolute; top: -40%; left: -20%;
+  width: 60%; height: 180%;
+  background: radial-gradient(ellipse, rgba(255,255,255,0.02), transparent);
+  transform: rotate(-25deg);
+}
+
+.verdict-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.verdict-left {}
+.verdict-word {
+  font-size: clamp(44px, 8vw, 80px);
+  font-weight: 800; letter-spacing: -3px; line-height: 1;
+  margin-bottom: 8px;
+}
+.verdict-word.real { color: var(--green); text-shadow: 0 0 40px rgba(0,255,170,0.3); }
+.verdict-word.fake { color: var(--red); text-shadow: 0 0 40px rgba(255,51,102,0.3); }
+.verdict-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 2px; }
+
+/* Confidence arc */
+.conf-arc-wrap { flex-shrink: 0; width: 90px; height: 90px; position: relative; }
+.conf-arc-wrap svg { width: 90px; height: 90px; }
+.conf-track { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
+.conf-fill {
+  fill: none; stroke-width: 7; stroke-linecap: round;
+  stroke-dasharray: 245; stroke-dashoffset: 245;
+  transform-origin: center;
+  transform: rotate(-90deg);
+  transition: stroke-dashoffset 1s cubic-bezier(.4,0,.2,1), stroke 0.3s;
+}
+.conf-label {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+}
+.conf-pct { font-family: var(--mono); font-size: 16px; font-weight: 700; }
+.conf-text { font-family: var(--mono); font-size: 8px; color: var(--muted); letter-spacing: 1px; }
+
+.verdict-reason {
+  margin-top: 16px; font-size: 13px; color: var(--muted);
+  line-height: 1.6; font-family: var(--mono);
+  padding: 12px 14px; background: var(--panel3); border-radius: 8px;
+  border-left: 2px solid var(--border2);
+}
+.verdict-reason.fake { border-left-color: rgba(255,51,102,0.4); }
+
+/* ── Score bars ── */
+.scores-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
+.scores-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+.score-row { margin-bottom: 16px; }
+.score-row:last-child { margin-bottom: 0; }
+.score-meta { display: flex; justify-content: space-between; margin-bottom: 7px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.bar-track { height: 8px; background: var(--panel3); border-radius: 4px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 4px; transition: width 1s cubic-bezier(.4,0,.2,1); width: 0; }
+.bar-real { background: linear-gradient(90deg, rgba(0,255,170,0.5), var(--green)); }
+.bar-fake { background: linear-gradient(90deg, rgba(255,51,102,0.5), var(--red)); }
+
+/* ── Features radar / bars ── */
+.explain-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
+.explain-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+
+.feat-rows {}
+.feat-row { margin-bottom: 13px; }
+.feat-row:last-child { margin-bottom: 0; }
+.feat-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+.feat-name { font-size: 12px; color: var(--text); font-family: var(--mono); }
+.feat-badge { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.feat-track { height: 5px; background: var(--panel3); border-radius: 3px; overflow: hidden; }
+.feat-fill {
+  height: 100%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--cyan-dim), var(--cyan));
+  transition: width 1s cubic-bezier(.4,0,.2,1); width: 0;
+}
+
+/* Radar canvas */
+.radar-wrap { display: flex; justify-content: center; margin-bottom: 16px; }
+canvas#radarChart { display: block; }
+
+/* ── Stats grid ── */
+.stats-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
+.stats-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.stat-cell { background: var(--panel2); border-radius: 10px; padding: 14px 12px; border: 1px solid var(--border); }
+.stat-val { font-family: var(--mono); font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+.stat-label { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
+
+/* ── History log ── */
+.history-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-top: 32px; display: none; }
+.history-card.show { display: block; }
+.history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+.history-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; }
+.history-clear {
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  background: none; border: 1px solid var(--border); border-radius: 5px;
+  padding: 4px 10px; cursor: pointer; transition: all 0.15s;
+}
+.history-clear:hover { color: var(--red); border-color: rgba(255,51,102,0.3); }
+.history-list { display: flex; flex-direction: column; gap: 8px; }
+.history-item {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: var(--panel2); border-radius: 10px; border: 1px solid var(--border);
+  font-family: var(--mono); font-size: 11px;
+  animation: fadeUp 0.3s ease;
+}
+.history-tag {
+  padding: 3px 8px; border-radius: 5px; font-size: 9px; font-weight: 700;
+  letter-spacing: 1px; flex-shrink: 0;
+}
+.history-tag.real { background: rgba(0,255,170,0.1); color: var(--green); }
+.history-tag.fake { background: rgba(255,51,102,0.1); color: var(--red); }
+.history-fname { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-conf { color: var(--muted); flex-shrink: 0; }
+.history-time { color: var(--muted2); font-size: 10px; flex-shrink: 0; }
+
+/* ── Spectral visualizer ── */
+.spectral-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
+.spectral-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
+canvas#spectralViz { width: 100%; height: 100px; display: block; border-radius: 8px; background: var(--panel3); }
+
+/* ── Reset button ── */
+.reset-btn {
+  width: 100%; background: transparent; border: 1px solid var(--border);
+  color: var(--muted); border-radius: 10px; padding: 12px;
+  cursor: pointer; font-size: 13px; font-family: var(--sans);
+  transition: all 0.15s; margin-top: 4px;
+}
+.reset-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+
+/* ── Footer ── */
+footer {
+  text-align: center; margin-top: 60px;
+  font-family: var(--mono); font-size: 10px; color: var(--muted2);
+  letter-spacing: 2px;
+}
+footer span { color: var(--muted); }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--muted2); border-radius: 3px; }
+
+@media(max-width:600px) {
+  .stats-grid { grid-template-columns: repeat(2,1fr); }
+  .samples-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="bg-layer"></div>
+<div class="bg-grid"></div>
 
+<div class="app">
+<div class="main-col">
+
+  <!-- Header -->
   <header class="header">
-    <div class="logo">⬡ VoiceGuard AI</div>
-    <h1 class="title">Is that voice <strong>real?</strong></h1>
-    <p class="subtitle">Upload any audio clip and detect AI-cloned or synthetic speech in seconds. Powered by MFCC + spectral analysis.</p>
+    <div class="header-top">
+      <div class="logo-hex">🛡️</div>
+      <div class="brand">VoiceGuard · AI Security</div>
+    </div>
+    <h1 class="headline">
+      <span class="word-real">Real</span> or <span class="word-fake">Fake?</span>
+    </h1>
+    <p class="tagline">// deepfake audio detection · MFCC + spectral + prosody · 270-dim features · 3-model ensemble</p>
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Connecting to inference server…</span>
+    </div>
   </header>
 
-  <div class="api-warning" id="apiWarning">
-    ⚠ Backend not connected. Running in <strong>demo simulation mode</strong> — start the FastAPI server at <code>localhost:8000</code> for real inference.
+  <!-- API Warning -->
+  <div class="api-warn" id="apiWarn">
+    ⚠ Backend offline — running in <strong>demo simulation mode</strong>.
+    Start the server: <code>uvicorn api.server:app --port 8000</code>
   </div>
 
-  <!-- Drop zone -->
-  <div class="dropzone" id="dropzone">
-    <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a"/>
-    <span class="dropzone-icon">🎙️</span>
-    <h3>Drop audio file here</h3>
-    <p>.wav · .mp3 · .flac · .ogg · .m4a — up to 20 MB</p>
-  </div>
+  <!-- Upload card -->
+  <div class="card" id="uploadCard">
+    <div class="card-header">// Input — audio file</div>
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="fileInput" accept=".wav,.mp3,.flac,.ogg,.m4a"/>
+      <span class="dz-icon">🎙</span>
+      <div class="dz-title">Drop audio file here</div>
+      <div class="dz-sub">.wav · .mp3 · .flac · .ogg · .m4a &nbsp;·&nbsp; max 20 MB</div>
+    </div>
 
-  <div class="or-row">OR TRY A SAMPLE</div>
+    <div class="or-div">or try a sample</div>
+    <div class="samples-wrap">
+      <div class="samples-grid">
+        <button class="sample-btn" onclick="loadSample('real_1')">
+          <span class="stag stag-r">REAL</span> Human voice #1
+        </button>
+        <button class="sample-btn" onclick="loadSample('real_2')">
+          <span class="stag stag-r">REAL</span> Human voice #2
+        </button>
+        <button class="sample-btn" onclick="loadSample('fake_1')">
+          <span class="stag stag-f">FAKE</span> ElevenLabs clone
+        </button>
+        <button class="sample-btn" onclick="loadSample('fake_2')">
+          <span class="stag stag-f">FAKE</span> TTS synthetic
+        </button>
+      </div>
+    </div>
 
-  <div class="samples-label">Demo clips</div>
-  <div class="samples" id="samples">
-    <button class="sample-btn" onclick="loadSample('real_1')">
-      <span class="tag real">REAL</span> Human voice #1
-    </button>
-    <button class="sample-btn" onclick="loadSample('real_2')">
-      <span class="tag real">REAL</span> Human voice #2
-    </button>
-    <button class="sample-btn" onclick="loadSample('fake_1')">
-      <span class="tag fake">FAKE</span> ElevenLabs clone #1
-    </button>
-    <button class="sample-btn" onclick="loadSample('fake_2')">
-      <span class="tag fake">FAKE</span> ElevenLabs clone #2
-    </button>
-  </div>
-
-  <!-- Audio panel -->
-  <div class="audio-panel" id="audioPanel">
-    <div class="audio-filename" id="audioFilename">—</div>
-    <canvas id="waveform"></canvas>
-    <audio id="player" controls></audio>
+    <!-- Waveform panel (shown after file load) -->
+    <div class="wave-panel" id="wavePanel">
+      <div class="wave-filename" id="waveFilename">—</div>
+      <canvas id="waveform"></canvas>
+      <audio id="player" controls></audio>
+    </div>
   </div>
 
   <button class="analyze-btn" id="analyzeBtn" onclick="analyze()">
-    Analyze for deepfake →
+    ⟶ &nbsp; Analyze for deepfake
   </button>
 
   <!-- Processing -->
   <div class="processing" id="processing">
-    <div class="spinner"></div>
-    <p id="processingMsg">Extracting MFCC features...</p>
+    <div class="scan-ring">
+      <svg viewBox="0 0 100 100">
+        <circle class="conf-track" cx="50" cy="50" r="39"/>
+        <circle class="scan-arc" cx="50" cy="50" r="39" transform="rotate(-90 50 50)"/>
+      </svg>
+      <div class="scan-inner">🔬</div>
+    </div>
+    <div class="proc-steps" id="procSteps">
+      <div class="proc-step" id="step0"><div class="proc-step-dot"></div>Loading audio signal</div>
+      <div class="proc-step" id="step1"><div class="proc-step-dot"></div>Extracting MFCC features</div>
+      <div class="proc-step" id="step2"><div class="proc-step-dot"></div>Computing spectral features</div>
+      <div class="proc-step" id="step3"><div class="proc-step-dot"></div>Analysing prosody & pitch</div>
+      <div class="proc-step" id="step4"><div class="proc-step-dot"></div>Running 3-model ensemble</div>
+      <div class="proc-step" id="step5"><div class="proc-step-dot"></div>Computing explainability</div>
+    </div>
   </div>
 
   <!-- Result -->
   <div class="result" id="result">
-    <div class="verdict-row">
-      <div>
-        <div class="verdict-badge" id="verdictBadge">—</div>
-        <div class="verdict-sub" id="verdictSub">—</div>
-      </div>
-      <div class="confidence-ring-wrap">
-        <svg viewBox="0 0 80 80">
-          <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="6"/>
-          <circle id="ringCircle" cx="40" cy="40" r="34" fill="none" stroke-width="6"
-                  stroke-linecap="round"
-                  stroke-dasharray="213.6"
-                  stroke-dashoffset="213.6"
-                  transform="rotate(-90 40 40)"
-                  style="transition: stroke-dashoffset 0.8s cubic-bezier(.4,0,.2,1)"/>
-        </svg>
-        <div class="ring-val" id="ringVal">0%</div>
-      </div>
-    </div>
 
-    <div class="scores">
-      <div class="score-row">
-        <div class="score-label-row">
-          <span>Real probability</span>
-          <span id="realPct">0%</span>
+    <!-- Verdict banner -->
+    <div class="verdict-banner" id="verdictBanner">
+      <div class="verdict-top">
+        <div class="verdict-left">
+          <div class="verdict-word" id="verdictWord">—</div>
+          <div class="verdict-sub" id="verdictSub">—</div>
         </div>
-        <div class="bar-track"><div class="bar-fill bar-real" id="realBar" style="width:0%"></div></div>
+        <div class="conf-arc-wrap">
+          <svg viewBox="0 0 90 90">
+            <circle class="conf-track" cx="45" cy="45" r="39"/>
+            <circle class="conf-fill" id="confArc" cx="45" cy="45" r="39"/>
+          </svg>
+          <div class="conf-label">
+            <div class="conf-pct" id="confPct">0%</div>
+            <div class="conf-text">CONF</div>
+          </div>
+        </div>
+      </div>
+      <div class="verdict-reason" id="verdictReason"></div>
+    </div>
+
+    <!-- Score bars -->
+    <div class="scores-card">
+      <div class="scores-title">// Probability scores</div>
+      <div class="score-row">
+        <div class="score-meta">
+          <span>Real (human) probability</span>
+          <span id="realPct" style="color:var(--green)">0%</span>
+        </div>
+        <div class="bar-track"><div class="bar-fill bar-real" id="realBar"></div></div>
       </div>
       <div class="score-row">
-        <div class="score-label-row">
-          <span>Fake probability</span>
-          <span id="fakePct">0%</span>
+        <div class="score-meta">
+          <span>Fake (synthetic) probability</span>
+          <span id="fakePct" style="color:var(--red)">0%</span>
         </div>
-        <div class="bar-track"><div class="bar-fill bar-fake" id="fakeBar" style="width:0%"></div></div>
+        <div class="bar-track"><div class="bar-fill bar-fake" id="fakeBar"></div></div>
       </div>
     </div>
 
-    <div class="stats">
-      <div class="stat">
-        <div class="stat-val" id="statConfidence">—</div>
-        <div class="stat-label">Confidence</div>
+    <!-- Spectral visualizer -->
+    <div class="spectral-card">
+      <div class="spectral-title">// Spectral fingerprint</div>
+      <canvas id="spectralViz"></canvas>
+    </div>
+
+    <!-- Feature importance radar + bars -->
+    <div class="explain-card">
+      <div class="explain-title">// Feature importance · top 5 signals</div>
+      <div class="radar-wrap">
+        <canvas id="radarChart" width="240" height="180"></canvas>
       </div>
-      <div class="stat">
-        <div class="stat-val" id="statFeatures">—</div>
-        <div class="stat-label">Features</div>
-      </div>
-      <div class="stat">
-        <div class="stat-val" id="statTime">—</div>
-        <div class="stat-label">Inference ms</div>
-      </div>
-      <div class="stat">
-        <div class="stat-val" id="statFile">—</div>
-        <div class="stat-label">File</div>
+      <div class="feat-rows" id="featRows"></div>
+    </div>
+
+    <!-- Stats -->
+    <div class="stats-card">
+      <div class="stats-title">// Analysis metadata</div>
+      <div class="stats-grid">
+        <div class="stat-cell">
+          <div class="stat-val" id="statConf" style="color:var(--cyan)">—</div>
+          <div class="stat-label">Confidence</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-val" id="statFeats">—</div>
+          <div class="stat-label">Features</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-val" id="statMs">—</div>
+          <div class="stat-label">Infer ms</div>
+        </div>
+        <div class="stat-cell">
+          <div class="stat-val" id="statFmt">—</div>
+          <div class="stat-label">Format</div>
+        </div>
       </div>
     </div>
 
-    <button class="reset-btn" onclick="reset()">↩ Analyze another clip</button>
+    <button class="reset-btn" onclick="resetAll()">↩ &nbsp; Analyze another clip</button>
   </div>
 
-  <footer class="footer">
-    Built for <span>AIML Hackathon</span> · VoiceGuard v1.0 · MFCC + Spectral + Prosody features
-  </footer>
+  <!-- History log -->
+  <div class="history-card" id="historyCard">
+    <div class="history-header">
+      <div class="history-title">// Session history</div>
+      <button class="history-clear" onclick="clearHistory()">clear</button>
+    </div>
+    <div class="history-list" id="historyList"></div>
+  </div>
+
+  <footer>VOICEGUARD v2.0 &nbsp;·&nbsp; <span>AIML Hackathon 2025</span> &nbsp;·&nbsp; MFCC · SPECTRAL · PROSODY</footer>
+</div>
 </div>
 
 <script>
+/* ─── State ─────────────────────────────────────── */
 const API = 'http://localhost:8000';
-let currentFile = null, apiAvailable = false;
+let currentFile = null, apiLive = false;
+let analysisHistory = [];
 
-fetch(`${API}/health`).then(()=>{ apiAvailable=true; })
-  .catch(()=>{ document.getElementById('apiWarning').classList.add('visible'); });
+/* ─── API health check ──────────────────────────── */
+fetch(`${API}/health`)
+  .then(r => {
+    if (r.ok) {
+      apiLive = true;
+      dot('live'); txt('Inference server online — real-time detection active');
+    } else throw 0;
+  })
+  .catch(() => {
+    dot('offline'); txt('Server offline — demo simulation mode');
+    show('apiWarn');
+  });
 
-const dz = document.getElementById('dropzone');
-dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', ()=>dz.classList.remove('drag'));
-dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('drag'); const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
-document.getElementById('fileInput').addEventListener('change', e=>{ if(e.target.files[0]) loadFile(e.target.files[0]); });
+function dot(cls) { el('statusDot').className = 'status-dot ' + cls; }
+function txt(t)   { el('statusText').textContent = t; }
 
-function loadFile(file){
+/* ─── DOM helpers ───────────────────────────────── */
+const el    = id => document.getElementById(id);
+const show  = id => el(id).classList.add('show');
+const hide  = id => el(id).classList.remove('show');
+
+/* ─── Drag & drop ───────────────────────────────── */
+const dz = el('dropzone');
+dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag');
+  const f = e.dataTransfer.files[0]; if (f) loadFile(f);
+});
+el('fileInput').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+
+function loadFile(file) {
   currentFile = file;
-  showAudioPanel(URL.createObjectURL(file), file.name);
+  const url = URL.createObjectURL(file);
+  showWavePanel(url, file.name);
 }
 
+/* ─── Sample clips ──────────────────────────────── */
 const SAMPLES = {
-  real_1:{name:'human_voice_01.wav', label:'REAL'},
-  real_2:{name:'human_voice_02.wav', label:'REAL'},
-  fake_1:{name:'elevenlabs_clone.wav', label:'FAKE'},
-  fake_2:{name:'tts_synthetic.wav', label:'FAKE'},
+  real_1: { name: 'human_voice_01.wav',    label: 'REAL' },
+  real_2: { name: 'human_voice_02.wav',    label: 'REAL' },
+  fake_1: { name: 'elevenlabs_clone.wav',  label: 'FAKE' },
+  fake_2: { name: 'tts_synthetic.wav',     label: 'FAKE' },
 };
-function loadSample(id){
-  currentFile = {name:SAMPLES[id].name, _demo:SAMPLES[id].label, size:80000};
-  showAudioPanel(null, SAMPLES[id].name);
-  drawFakeWaveform(id.startsWith('real'));
+function loadSample(id) {
+  currentFile = { name: SAMPLES[id].name, _demo: SAMPLES[id].label, size: 80000 };
+  showWavePanel(null, SAMPLES[id].name);
+  drawDemoWaveform(id.startsWith('real'));
 }
 
-function showAudioPanel(url, name){
-  document.getElementById('audioFilename').textContent = '📂 ' + name;
-  const p = document.getElementById('player');
-  if(url){ p.src=url; p.style.display=''; drawWaveform(url); }
-  else { p.style.display='none'; }
-  document.getElementById('audioPanel').classList.add('visible');
-  document.getElementById('analyzeBtn').classList.add('visible');
-  document.getElementById('result').classList.remove('visible');
-  document.getElementById('result').className = 'result';
+/* ─── Waveform panel ────────────────────────────── */
+function showWavePanel(url, name) {
+  el('waveFilename').textContent = '📂 ' + name;
+  const player = el('player');
+  if (url) {
+    player.src = url; player.style.display = '';
+    drawRealWaveform(url);
+  } else {
+    player.style.display = 'none';
+  }
+  el('wavePanel').classList.add('show');
+  el('analyzeBtn').classList.add('show');
+  hide('result'); hide('processing');
+  el('result').className = 'result';
 }
 
-async function drawWaveform(url){
-  try{
-    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+async function drawRealWaveform(url) {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const buf = await (await fetch(url)).arrayBuffer();
     const decoded = await ctx.decodeAudioData(buf);
     renderWaveform(decoded.getChannelData(0));
-  } catch(e){ drawFakeWaveform(true); }
+  } catch { drawDemoWaveform(true); }
 }
-function drawFakeWaveform(isReal){
-  const data = new Float32Array(800);
-  for(let i=0;i<data.length;i++){
-    data[i] = isReal
-      ? (Math.sin(i*.15)*.6+Math.sin(i*.37)*.3)*(0.5+0.5*Math.random())
-      : (Math.sin(i*.12)*.75)*(0.8+0.2*Math.random());
+
+function drawDemoWaveform(isReal) {
+  const d = new Float32Array(1000);
+  for (let i = 0; i < d.length; i++) {
+    d[i] = isReal
+      ? (Math.sin(i * .13) * .6 + Math.sin(i * .31) * .3) * (.5 + .5 * Math.random())
+      : (Math.sin(i * .11) * .8) * (.85 + .15 * Math.random());
   }
-  renderWaveform(data);
+  renderWaveform(d);
 }
-function renderWaveform(data){
-  const canvas = document.getElementById('waveform');
-  const W = (canvas.offsetWidth||800)*window.devicePixelRatio;
-  const H = 160; canvas.width=W; canvas.height=H;
+
+function renderWaveform(data) {
+  const canvas = el('waveform');
+  const dpr = window.devicePixelRatio || 1;
+  const W = (canvas.offsetWidth || 800) * dpr;
+  const H = 140;
+  canvas.width = W; canvas.height = H;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0,0,W,H);
-  const step = Math.ceil(data.length/W);
-  ctx.strokeStyle='#00c8ff'; ctx.lineWidth=1.5; ctx.globalAlpha=0.7;
+  ctx.clearRect(0, 0, W, H);
+  const step = Math.ceil(data.length / W);
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, 'rgba(0,210,255,0.3)');
+  grad.addColorStop(0.5, 'rgba(0,210,255,0.8)');
+  grad.addColorStop(1, 'rgba(0,210,255,0.3)');
+  ctx.strokeStyle = grad;
+  ctx.lineWidth = 1.2;
   ctx.beginPath();
-  for(let i=0;i<W;i++){
-    let mn=1,mx=-1;
-    for(let j=0;j<step;j++){ const v=data[i*step+j]||0; if(v<mn)mn=v; if(v>mx)mx=v; }
-    ctx.moveTo(i,(1+mn)*H/2); ctx.lineTo(i,Math.max(1,(1+mx)*H/2));
+  for (let i = 0; i < W; i++) {
+    let mn = 1, mx = -1;
+    for (let j = 0; j < step; j++) {
+      const v = data[i * step + j] || 0;
+      if (v < mn) mn = v; if (v > mx) mx = v;
+    }
+    ctx.moveTo(i, (1 + mn) * H / 2);
+    ctx.lineTo(i, Math.max(1, (1 + mx) * H / 2));
   }
   ctx.stroke();
+  // Centre line
+  ctx.strokeStyle = 'rgba(0,210,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
 }
 
-const msgs=['Extracting MFCC features...','Computing spectral centroid...','Analysing pitch prosody...','Running 3-model ensemble...','Computing feature importance...'];
-async function analyze(){
-  if(!currentFile) return;
-  const btn = document.getElementById('analyzeBtn');
+/* ─── Processing animation ──────────────────────── */
+const STEPS = ['step0','step1','step2','step3','step4','step5'];
+let stepTimer = null;
+
+function startStepAnim() {
+  let i = 0;
+  STEPS.forEach(s => el(s).className = 'proc-step');
+  stepTimer = setInterval(() => {
+    if (i > 0) el(STEPS[i - 1]).className = 'proc-step done';
+    if (i < STEPS.length) { el(STEPS[i]).className = 'proc-step active'; i++; }
+    else { clearInterval(stepTimer); }
+  }, 420);
+}
+function endStepAnim() {
+  clearInterval(stepTimer);
+  STEPS.forEach(s => el(s).className = 'proc-step done');
+}
+
+/* ─── Analyze ───────────────────────────────────── */
+async function analyze() {
+  if (!currentFile) return;
+  const btn = el('analyzeBtn');
   btn.disabled = true;
-  document.getElementById('processing').classList.add('visible');
-  document.getElementById('result').classList.remove('visible');
-  let mi=0;
-  const msgEl = document.getElementById('processingMsg');
-  const iv = setInterval(()=>{ msgEl.textContent=msgs[mi%msgs.length]; mi++; },500);
+  show('processing'); hide('result');
+  startStepAnim();
+
   let data;
-  if(apiAvailable && currentFile instanceof File){
+  if (apiLive && currentFile instanceof File) {
     const form = new FormData(); form.append('file', currentFile);
-    try{
-      const r = await fetch(`${API}/predict`,{method:'POST',body:form});
+    try {
+      const r = await fetch(`${API}/predict`, { method: 'POST', body: form });
       data = await r.json();
-      if(!r.ok) throw new Error(data.detail);
-    } catch(e){ data = simulateResult(currentFile.name); }
+      if (!r.ok) throw new Error(data.detail);
+    } catch { data = simulateResult(currentFile.name); }
   } else {
-    await new Promise(r=>setTimeout(r,2500));
-    data = simulateResult(currentFile._demo||currentFile.name);
+    await new Promise(r => setTimeout(r, 2800));
+    data = simulateResult(currentFile._demo || currentFile.name);
   }
-  clearInterval(iv);
-  document.getElementById('processing').classList.remove('visible');
-  showResult(data); btn.disabled=false;
+
+  endStepAnim();
+  await new Promise(r => setTimeout(r, 300));
+  hide('processing');
+  showResult(data);
+  addHistory(data);
+  btn.disabled = false;
 }
 
-function simulateResult(hint){
-  const isFake = typeof hint==='string'&&(hint==='FAKE'||hint.toLowerCase().includes('clone')||hint.toLowerCase().includes('fake')||hint.toLowerCase().includes('tts')||hint.toLowerCase().includes('synthetic'));
-  const fake_score = isFake ? 0.74+Math.random()*.2 : 0.04+Math.random()*.16;
-  const real_score = 1-fake_score;
-  const label = fake_score>0.5?'FAKE':'REAL';
+/* ─── Simulate result ───────────────────────────── */
+function simulateResult(hint) {
+  const h = typeof hint === 'string' ? hint.toLowerCase() : '';
+  const isFake = hint === 'FAKE' || h.includes('clone') || h.includes('fake') || h.includes('tts') || h.includes('synthetic') || h.includes('eleven');
+  const fake_score = isFake ? 0.74 + Math.random() * .2 : 0.04 + Math.random() * .16;
+  const real_score = 1 - fake_score;
+  const label = fake_score > 0.5 ? 'FAKE' : 'REAL';
   return {
-    label, fake_score:+fake_score.toFixed(4), real_score:+real_score.toFixed(4),
-    confidence:+Math.max(fake_score,real_score).toFixed(4),
-    features:270, processing_time_ms:120+Math.floor(Math.random()*80),
-    filename:(currentFile&&currentFile.name)||'demo.wav',
+    label, fake_score: +fake_score.toFixed(4), real_score: +real_score.toFixed(4),
+    confidence: +Math.max(fake_score, real_score).toFixed(4),
+    features: 270,
+    processing_time_ms: 120 + Math.floor(Math.random() * 80),
+    filename: (currentFile && currentFile.name) || 'demo.wav',
     verdict_reason: isFake
-      ? 'Flagged as synthetic. Key signal: Spectral flatness (synthesis artifact). Confidence '+Math.round(fake_score*100)+'% — characteristic patterns match AI-generated speech.'
-      : 'Likely authentic human speech. Key signal: Pitch variation (vibrato / naturalness). Confidence '+Math.round(real_score*100)+'% — natural prosody consistent with real voice.',
+      ? `Flagged as synthetic. Key signal: Spectral flatness. Confidence ${Math.round(fake_score * 100)}% — patterns match AI-generated speech training corpus.`
+      : `Likely authentic human speech. Key signal: Pitch variation & vibrato. Confidence ${Math.round(real_score * 100)}% — natural prosody consistent with real voice.`,
     top_features: isFake ? [
-      {name:'Spectral flatness (synthesis artifact)', weight:18.4, value:0.312},
-      {name:'Pitch variation (vibrato / naturalness)',  weight:14.2, value:2.1},
-      {name:'Voiced ratio (natural speech rhythm)',     weight:11.7, value:0.68},
-      {name:'Spectral centroid (frequency balance)',    weight:9.8,  value:1842},
-      {name:'Zero-crossing rate (noise texture)',       weight:8.3,  value:0.091},
+      { name: 'Spectral flatness',        key: 'spectral_flatness', value: 0.312, weight: 18.4 },
+      { name: 'Pitch variation (f0_std)', key: 'f0_std',            value: 2.1,   weight: 14.2 },
+      { name: 'Voiced ratio',             key: 'voiced_ratio',      value: 0.68,  weight: 11.7 },
+      { name: 'Spectral centroid',        key: 'spectral_centroid', value: 1842,  weight: 9.8  },
+      { name: 'Zero-crossing rate',       key: 'zcr',               value: 0.091, weight: 8.3  },
     ] : [
-      {name:'Pitch variation (vibrato / naturalness)',  weight:16.1, value:18.4},
-      {name:'Voiced ratio (natural speech rhythm)',     weight:13.5, value:0.82},
-      {name:'Spectral flatness (synthesis artifact)',   weight:10.2, value:0.041},
-      {name:'Spectral centroid (frequency balance)',    weight:9.1,  value:2210},
-      {name:'Zero-crossing rate (noise texture)',       weight:7.8,  value:0.074},
+      { name: 'Pitch variation (f0_std)', key: 'f0_std',            value: 18.4,  weight: 16.1 },
+      { name: 'Voiced ratio',             key: 'voiced_ratio',      value: 0.82,  weight: 13.5 },
+      { name: 'Spectral flatness',        key: 'spectral_flatness', value: 0.041, weight: 10.2 },
+      { name: 'Spectral centroid',        key: 'spectral_centroid', value: 2210,  weight: 9.1  },
+      { name: 'Zero-crossing rate',       key: 'zcr',               value: 0.074, weight: 7.8  },
     ],
   };
 }
 
-function showResult(data){
-  const isFake = data.label==='FAKE';
-  const res = document.getElementById('result');
-  res.className = `result ${isFake?'fake':'real'}-result visible`;
+/* ─── Show result ───────────────────────────────── */
+function showResult(data) {
+  const isFake = data.label === 'FAKE';
+  const color  = isFake ? 'var(--red)' : 'var(--green)';
+  const r      = el('result');
+  r.className  = 'result show';
 
-  document.getElementById('verdictBadge').textContent = data.label;
-  document.getElementById('verdictBadge').className = `verdict-badge ${isFake?'fake':'real'}`;
-  document.getElementById('verdictSub').textContent = isFake
-    ? 'Synthetic / AI-cloned speech detected'
-    : 'Natural human voice — no spoofing detected';
+  // Verdict
+  el('verdictBanner').className = `verdict-banner ${isFake ? 'fake' : 'real'}`;
+  el('verdictWord').textContent  = data.label;
+  el('verdictWord').className    = `verdict-word ${isFake ? 'fake' : 'real'}`;
+  el('verdictSub').textContent   = isFake ? 'Synthetic / AI-cloned speech detected' : 'Authentic human voice — no spoofing detected';
+  el('verdictReason').textContent = data.verdict_reason || '';
+  el('verdictReason').className   = `verdict-reason ${isFake ? 'fake' : ''}`;
 
-  const confPct = Math.round(data.confidence*100);
-  const ring = document.getElementById('ringCircle');
-  ring.style.stroke = isFake?'var(--danger)':'var(--accent2)';
-  ring.style.strokeDashoffset = 213.6*(1-data.confidence);
-  document.getElementById('ringVal').textContent = confPct+'%';
-  document.getElementById('ringVal').style.color = isFake?'var(--danger)':'var(--accent2)';
+  // Confidence arc
+  const confPct = Math.round(data.confidence * 100);
+  el('confPct').textContent = confPct + '%';
+  el('confPct').style.color = color;
+  const arc = el('confArc');
+  arc.style.stroke = color;
+  // circumference = 2π×39 ≈ 245
+  setTimeout(() => { arc.style.strokeDashoffset = 245 * (1 - data.confidence); }, 50);
 
-  const rPct = Math.round(data.real_score*100);
-  const fPct = Math.round(data.fake_score*100);
-  document.getElementById('realBar').style.width=rPct+'%';
-  document.getElementById('fakeBar').style.width=fPct+'%';
-  document.getElementById('realPct').textContent=rPct+'%';
-  document.getElementById('fakePct').textContent=fPct+'%';
+  // Score bars
+  const rPct = Math.round(data.real_score * 100);
+  const fPct = Math.round(data.fake_score * 100);
+  el('realPct').textContent = rPct + '%';
+  el('fakePct').textContent = fPct + '%';
+  setTimeout(() => {
+    el('realBar').style.width = rPct + '%';
+    el('fakeBar').style.width = fPct + '%';
+  }, 100);
 
-  const vr = document.getElementById('verdictReason');
-  vr.textContent = data.verdict_reason || '';
-  vr.className = `verdict-reason ${isFake?'fake-reason':''}`;
+  // Stats
+  el('statConf').textContent  = confPct + '%';
+  el('statFeats').textContent = data.features;
+  el('statMs').textContent    = data.processing_time_ms;
+  el('statFmt').textContent   = (data.filename || '').split('.').pop().toUpperCase();
 
-  const feats = data.top_features||[];
-  if(feats.length){
-    const maxW = Math.max(...feats.map(f=>f.weight));
-    document.getElementById('featureBars').innerHTML = feats.map(f=>`
+  // Feature bars
+  const feats = data.top_features || [];
+  if (feats.length) {
+    const maxW = Math.max(...feats.map(f => f.weight));
+    el('featRows').innerHTML = feats.map(f => `
       <div class="feat-row">
-        <div class="feat-name">${f.name}</div>
-        <div class="feat-val">${f.weight}%</div>
-        <div class="feat-bar-track"><div class="feat-bar-fill" style="width:${Math.round(f.weight/maxW*100)}%"></div></div>
+        <div class="feat-meta">
+          <div class="feat-name">${f.name}</div>
+          <div class="feat-badge">${f.weight}% &nbsp;·&nbsp; val: ${f.value}</div>
+        </div>
+        <div class="feat-track">
+          <div class="feat-fill" id="ff_${f.key}" style="width:0%"></div>
+        </div>
       </div>`).join('');
-    document.getElementById('explainSection').style.display='block';
-  } else {
-    document.getElementById('explainSection').style.display='none';
+    setTimeout(() => {
+      feats.forEach(f => {
+        const el2 = document.getElementById('ff_' + f.key);
+        if (el2) el2.style.width = Math.round(f.weight / maxW * 100) + '%';
+      });
+    }, 150);
+    drawRadar(feats, isFake);
   }
 
-  document.getElementById('statConf').textContent=confPct+'%';
-  document.getElementById('statFeats').textContent=data.features;
-  document.getElementById('statTime').textContent=data.processing_time_ms;
-  document.getElementById('statFile').textContent=(data.filename||'').split('.').pop().toUpperCase();
+  // Spectral fingerprint
+  drawSpectral(isFake);
 }
 
-function reset(){
-  currentFile=null;
-  ['audioPanel','analyzeBtn'].forEach(id=>document.getElementById(id).classList.remove('visible'));
-  document.getElementById('result').classList.remove('visible');
-  document.getElementById('result').className='result';
-  document.getElementById('fileInput').value='';
-  document.getElementById('player').src='';
-  document.getElementById('explainSection').style.display='none';
+/* ─── Radar chart ───────────────────────────────── */
+function drawRadar(feats, isFake) {
+  const canvas = el('radarChart');
+  const W = 240, H = 180, cx = W/2, cy = H/2, r = 70;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const n = feats.length;
+  const angles = feats.map((_, i) => (i / n) * Math.PI * 2 - Math.PI / 2);
+  const max = Math.max(...feats.map(f => f.weight));
+
+  // Grid rings
+  [0.25, 0.5, 0.75, 1.0].forEach(t => {
+    ctx.beginPath();
+    angles.forEach((a, i) => {
+      const x = cx + Math.cos(a) * r * t;
+      const y = cy + Math.sin(a) * r * t;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
+  });
+
+  // Spokes
+  angles.forEach(a => {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
+  });
+
+  // Data polygon
+  const color = isFake ? '255,51,102' : '0,255,170';
+  ctx.beginPath();
+  feats.forEach((f, i) => {
+    const t = f.weight / max;
+    const x = cx + Math.cos(angles[i]) * r * t;
+    const y = cy + Math.sin(angles[i]) * r * t;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fillStyle = `rgba(${color},0.12)`; ctx.fill();
+  ctx.strokeStyle = `rgba(${color},0.8)`; ctx.lineWidth = 1.5; ctx.stroke();
+
+  // Dots
+  feats.forEach((f, i) => {
+    const t = f.weight / max;
+    const x = cx + Math.cos(angles[i]) * r * t;
+    const y = cy + Math.sin(angles[i]) * r * t;
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fillStyle = `rgb(${color})`; ctx.fill();
+  });
+
+  // Labels
+  ctx.font = '9px JetBrains Mono, monospace';
+  ctx.fillStyle = 'rgba(180,210,240,0.6)';
+  ctx.textAlign = 'center';
+  feats.forEach((f, i) => {
+    const x = cx + Math.cos(angles[i]) * (r + 18);
+    const y = cy + Math.sin(angles[i]) * (r + 18) + 3;
+    const shortName = f.name.split('(')[0].trim().split(' ').slice(-1)[0];
+    ctx.fillText(shortName, x, y);
+  });
+}
+
+/* ─── Spectral fingerprint visualizer ──────────────── */
+function drawSpectral(isFake) {
+  const canvas = el('spectralViz');
+  const dpr = window.devicePixelRatio || 1;
+  const W = (canvas.offsetWidth || 800) * dpr;
+  const H = 100 * dpr;
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  const bars = Math.floor(W / (3 * dpr));
+  for (let i = 0; i < bars; i++) {
+    const x = i * 3 * dpr;
+    // Simulated spectral energy — fake audio has unnaturally regular peaks
+    let energy;
+    if (isFake) {
+      energy = 0.5 + 0.45 * Math.sin(i * 0.18) + 0.05 * (Math.random() - 0.5);
+    } else {
+      energy = 0.3 + 0.4 * Math.abs(Math.sin(i * 0.13 + Math.sin(i * 0.07) * 2)) + 0.2 * Math.random();
+    }
+    energy = Math.max(0.05, Math.min(1, energy));
+    const h = energy * (H - 4 * dpr);
+    const hue = isFake ? `rgba(255,51,102,${0.3 + energy * 0.5})` : `rgba(0,210,255,${0.25 + energy * 0.5})`;
+    ctx.fillStyle = hue;
+    ctx.fillRect(x, H - h, 2 * dpr, h);
+  }
+}
+
+/* ─── History log ───────────────────────────────── */
+function addHistory(data) {
+  const now = new Date();
+  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  analysisHistory.unshift({ ...data, time });
+  renderHistory();
+  show('historyCard');
+}
+
+function renderHistory() {
+  el('historyList').innerHTML = analysisHistory.slice(0, 8).map(h => {
+    const isFake = h.label === 'FAKE';
+    const conf = Math.round(h.confidence * 100);
+    const fname = (h.filename || 'unknown').substring(0, 28);
+    return `
+      <div class="history-item">
+        <span class="history-tag ${isFake ? 'fake' : 'real'}">${h.label}</span>
+        <span class="history-fname">${fname}</span>
+        <span class="history-conf">${conf}%</span>
+        <span class="history-time">${h.time}</span>
+      </div>`;
+  }).join('');
+}
+
+function clearHistory() {
+  analysisHistory = [];
+  el('historyList').innerHTML = '';
+  hide('historyCard');
+}
+
+/* ─── Reset ─────────────────────────────────────── */
+function resetAll() {
+  currentFile = null;
+  el('wavePanel').classList.remove('show');
+  el('analyzeBtn').classList.remove('show');
+  el('analyzeBtn').disabled = false;
+  hide('result'); hide('processing');
+  el('result').className = 'result';
+  el('fileInput').value = '';
+  el('player').src = '';
+  // reset arc
+  el('confArc').style.strokeDashoffset = '245';
+  el('realBar').style.width = '0%';
+  el('fakeBar').style.width = '0%';
 }
 </script>
 </body>
