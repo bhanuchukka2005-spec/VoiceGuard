@@ -4,463 +4,13 @@
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>VoiceGuard — Audio Deepfake Detector</title>
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=JetBrains+Mono:wght@300;400;500;700&display=swap');
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-:root {
-  --bg: #03050a;
-  --panel: #080d14;
-  --panel2: #0c1520;
-  --panel3: #101c28;
-  --border: rgba(0,210,255,0.10);
-  --border2: rgba(0,210,255,0.22);
-  --cyan: #00d2ff;
-  --cyan-dim: rgba(0,210,255,0.18);
-  --green: #00ffaa;
-  --red: #ff3366;
-  --amber: #ffb700;
-  --text: #ddeeff;
-  --muted: #4a7090;
-  --muted2: #2a4560;
-  --mono: 'JetBrains Mono', monospace;
-  --sans: 'Syne', sans-serif;
-  --scan-speed: 2.4s;
-}
-
-html { scroll-behavior: smooth; }
-
-body {
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--sans);
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-
-/* ── Background ── */
-.bg-layer {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background:
-    radial-gradient(ellipse 70% 50% at 20% 10%, rgba(0,100,200,0.08) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 40% at 85% 80%, rgba(0,210,255,0.05) 0%, transparent 60%);
-}
-.bg-grid {
-  position: fixed; inset: 0; z-index: 0; pointer-events: none;
-  background-image:
-    linear-gradient(rgba(0,210,255,0.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,210,255,0.025) 1px, transparent 1px);
-  background-size: 48px 48px;
-}
-
-/* ── Layout ── */
-.app { position: relative; z-index: 1; display: grid; grid-template-columns: 1fr; min-height: 100vh; }
-
-.main-col {
-  max-width: 920px; width: 100%; margin: 0 auto;
-  padding: 48px 28px 100px;
-}
-
-/* ── Header ── */
-.header { margin-bottom: 56px; }
-.header-top {
-  display: flex; align-items: center; gap: 14px; margin-bottom: 8px;
-}
-.logo-hex {
-  width: 40px; height: 40px; background: var(--cyan-dim);
-  border: 1px solid var(--border2); border-radius: 10px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 18px;
-}
-.brand {
-  font-family: var(--mono); font-size: 11px; letter-spacing: 5px;
-  color: var(--cyan); text-transform: uppercase; opacity: 0.7;
-}
-.headline {
-  font-size: clamp(38px, 6vw, 72px);
-  font-weight: 800; letter-spacing: -3px; line-height: 0.95;
-  margin-bottom: 20px;
-}
-.headline .word-real { color: var(--green); }
-.headline .word-fake { color: var(--red); }
-
-.tagline {
-  font-size: 15px; color: var(--muted); line-height: 1.65;
-  max-width: 520px; font-weight: 400;
-  font-family: var(--mono);
-}
-
-/* ── Status badge ── */
-.status-bar {
-  display: flex; align-items: center; gap: 10px;
-  font-family: var(--mono); font-size: 11px;
-  color: var(--muted); margin-top: 24px; margin-bottom: 0;
-}
-.status-dot {
-  width: 7px; height: 7px; border-radius: 50%;
-  background: var(--muted2); flex-shrink: 0;
-  transition: background 0.3s;
-}
-.status-dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse-dot 2s infinite; }
-.status-dot.offline { background: var(--amber); }
-@keyframes pulse-dot {
-  0%,100% { opacity: 1; } 50% { opacity: 0.4; }
-}
-
-/* ── Upload card ── */
-.card {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  overflow: hidden;
-  transition: border-color 0.3s;
-}
-.card:hover { border-color: var(--border2); }
-.card-header {
-  padding: 18px 24px 0;
-  font-family: var(--mono); font-size: 10px; letter-spacing: 3px;
-  color: var(--muted); text-transform: uppercase;
-}
-
-/* ── Drop zone ── */
-.dropzone {
-  margin: 16px; border: 1.5px dashed var(--border2); border-radius: 14px;
-  padding: 40px 24px; text-align: center; cursor: pointer;
-  transition: all 0.2s; background: var(--panel2); position: relative;
-  overflow: hidden;
-}
-.dropzone::before {
-  content: '';
-  position: absolute; inset: 0;
-  background: radial-gradient(ellipse 60% 60% at 50% 50%, rgba(0,210,255,0.04), transparent);
-  opacity: 0; transition: opacity 0.3s;
-}
-.dropzone:hover::before, .dropzone.drag::before { opacity: 1; }
-.dropzone:hover, .dropzone.drag {
-  border-color: var(--cyan); background: rgba(0,210,255,0.03);
-}
-/* FIX: input must cover full dropzone area for click-to-upload to work */
-.dropzone input {
-  position: absolute; inset: 0; opacity: 0; cursor: pointer;
-  width: 100%; height: 100%;
-  /* FIX: accept any audio type — was restricting to 5 extensions only */
-}
-.dz-icon {
-  font-size: 36px; margin-bottom: 14px; display: block;
-  filter: drop-shadow(0 0 12px rgba(0,210,255,0.4));
-}
-.dz-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
-.dz-sub { font-size: 12px; color: var(--muted); font-family: var(--mono); }
-
-.or-div {
-  display: flex; align-items: center; gap: 12px; padding: 0 16px 0;
-  font-family: var(--mono); font-size: 10px; color: var(--muted); letter-spacing: 2px;
-}
-.or-div::before, .or-div::after { content: ''; flex: 1; height: 1px; background: var(--border); }
-
-/* ── Samples ── */
-.samples-wrap { padding: 12px 16px 16px; }
-.samples-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.sample-btn {
-  background: var(--panel2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 10px 12px; cursor: pointer;
-  font-family: var(--sans); font-size: 12px; color: var(--text);
-  display: flex; align-items: center; gap: 8px;
-  transition: all 0.15s; text-align: left;
-}
-.sample-btn:hover { border-color: var(--cyan); }
-.stag {
-  font-family: var(--mono); font-size: 9px; font-weight: 700;
-  padding: 3px 6px; border-radius: 5px; letter-spacing: 1px; flex-shrink: 0;
-}
-.stag-r { background: rgba(0,255,170,0.12); color: var(--green); }
-.stag-f { background: rgba(255,51,102,0.12); color: var(--red); }
-
-/* ── Waveform panel ── */
-.wave-panel {
-  padding: 16px; display: none;
-  border-top: 1px solid var(--border);
-}
-.wave-panel.show { display: block; }
-.wave-filename {
-  font-family: var(--mono); font-size: 11px; color: var(--cyan);
-  margin-bottom: 12px; opacity: 0.8; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis;
-}
-canvas#waveform {
-  width: 100%; height: 70px; display: block;
-  border-radius: 8px; background: var(--panel3); margin-bottom: 12px;
-}
-audio#player { width: 100%; height: 32px; display: none; }
-
-/* ── Analyze button ── */
-.analyze-btn {
-  display: none; width: calc(100% - 32px); margin: 0 16px 16px;
-  background: var(--cyan); color: #020810;
-  border: none; border-radius: 12px; padding: 15px;
-  font-size: 14px; font-weight: 700; cursor: pointer;
-  font-family: var(--sans); letter-spacing: 0.5px;
-  transition: opacity 0.2s, transform 0.1s;
-  position: relative; overflow: hidden;
-}
-.analyze-btn::after {
-  content: '';
-  position: absolute; top: -50%; left: -60%; width: 40%; height: 200%;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.25), transparent);
-  transform: skewX(-20deg);
-  animation: shine 2.5s infinite;
-}
-@keyframes shine { 0%,60% { left: -60%; opacity: 0; } 61% { opacity: 1; } 100% { left: 130%; opacity: 0; } }
-.analyze-btn.show { display: block; }
-.analyze-btn:hover { opacity: 0.9; transform: translateY(-1px); }
-.analyze-btn:disabled { opacity: 0.3; cursor: not-allowed; transform: none; }
-
-/* ── API warning ── */
-.api-warn {
-  background: rgba(255,183,0,0.06); border: 1px solid rgba(255,183,0,0.2);
-  border-radius: 12px; padding: 14px 18px; margin-bottom: 20px;
-  font-size: 12px; color: var(--amber); font-family: var(--mono);
-  display: none; line-height: 1.5;
-}
-.api-warn.show { display: block; }
-
-/* ── Error message ── */
-.error-msg {
-  background: rgba(255,51,102,0.06); border: 1px solid rgba(255,51,102,0.2);
-  border-radius: 12px; padding: 14px 18px; margin-bottom: 20px;
-  font-size: 12px; color: var(--red); font-family: var(--mono);
-  display: none; line-height: 1.5;
-}
-.error-msg.show { display: block; }
-
-/* ── Processing overlay ── */
-.processing {
-  display: none; padding: 48px 24px; text-align: center;
-}
-.processing.show { display: block; }
-
-.scan-ring {
-  width: 100px; height: 100px; position: relative; margin: 0 auto 24px;
-}
-.scan-ring svg { width: 100%; height: 100%; }
-.scan-arc {
-  fill: none; stroke: var(--cyan); stroke-width: 2;
-  stroke-linecap: round;
-  stroke-dasharray: 200;
-  stroke-dashoffset: 200;
-  animation: scan-draw var(--scan-speed) ease-in-out infinite;
-}
-@keyframes scan-draw {
-  0%   { stroke-dashoffset: 200; opacity: 1; }
-  70%  { stroke-dashoffset: 0; opacity: 1; }
-  100% { stroke-dashoffset: 0; opacity: 0; }
-}
-.scan-inner {
-  position: absolute; inset: 12px;
-  border-radius: 50%; border: 1px solid var(--border2);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 26px;
-}
-.scan-inner::after {
-  content: '';
-  position: absolute; inset: 0; border-radius: 50%;
-  background: conic-gradient(var(--cyan-dim), transparent, transparent);
-  animation: conic-spin var(--scan-speed) linear infinite;
-}
-@keyframes conic-spin { to { transform: rotate(360deg); } }
-
-.proc-steps { display: flex; flex-direction: column; gap: 6px; max-width: 300px; margin: 0 auto; }
-.proc-step {
-  font-family: var(--mono); font-size: 11px; color: var(--muted);
-  padding: 6px 12px; border-radius: 6px; background: var(--panel2);
-  border: 1px solid var(--border);
-  transition: all 0.3s; text-align: left;
-  display: flex; align-items: center; gap: 8px;
-}
-.proc-step.active {
-  color: var(--cyan); border-color: rgba(0,210,255,0.3);
-  background: rgba(0,210,255,0.05);
-}
-.proc-step.done { color: var(--green); border-color: rgba(0,255,170,0.15); }
-.proc-step-dot {
-  width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0;
-  background: var(--muted2);
-  transition: background 0.3s;
-}
-.proc-step.active .proc-step-dot { background: var(--cyan); animation: pulse-dot 0.8s infinite; }
-.proc-step.done .proc-step-dot { background: var(--green); }
-
-/* ── Result card ── */
-.result {
-  display: none; animation: fadeUp 0.5s ease;
-}
-.result.show { display: block; }
-@keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
-
-/* Verdict banner */
-.verdict-banner {
-  border-radius: 16px; padding: 28px 28px 24px;
-  margin-bottom: 20px; position: relative; overflow: hidden;
-  border: 1px solid;
-}
-.verdict-banner.real {
-  background: linear-gradient(135deg, rgba(0,255,170,0.04), transparent);
-  border-color: rgba(0,255,170,0.25);
-}
-.verdict-banner.fake {
-  background: linear-gradient(135deg, rgba(255,51,102,0.05), transparent);
-  border-color: rgba(255,51,102,0.3);
-}
-.verdict-banner::before {
-  content: '';
-  position: absolute; top: -40%; left: -20%;
-  width: 60%; height: 180%;
-  background: radial-gradient(ellipse, rgba(255,255,255,0.02), transparent);
-  transform: rotate(-25deg);
-}
-
-.verdict-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.verdict-left {}
-.verdict-word {
-  font-size: clamp(44px, 8vw, 80px);
-  font-weight: 800; letter-spacing: -3px; line-height: 1;
-  margin-bottom: 8px;
-}
-.verdict-word.real { color: var(--green); text-shadow: 0 0 40px rgba(0,255,170,0.3); }
-.verdict-word.fake { color: var(--red); text-shadow: 0 0 40px rgba(255,51,102,0.3); }
-.verdict-sub { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 2px; }
-
-/* Confidence arc */
-.conf-arc-wrap { flex-shrink: 0; width: 90px; height: 90px; position: relative; }
-.conf-arc-wrap svg { width: 90px; height: 90px; }
-.conf-track { fill: none; stroke: rgba(255,255,255,0.05); stroke-width: 7; }
-.conf-fill {
-  fill: none; stroke-width: 7; stroke-linecap: round;
-  stroke-dasharray: 245; stroke-dashoffset: 245;
-  transform-origin: center;
-  transform: rotate(-90deg);
-  transition: stroke-dashoffset 1s cubic-bezier(.4,0,.2,1), stroke 0.3s;
-}
-.conf-label {
-  position: absolute; inset: 0;
-  display: flex; flex-direction: column; align-items: center; justify-content: center;
-}
-.conf-pct { font-family: var(--mono); font-size: 16px; font-weight: 700; }
-.conf-text { font-family: var(--mono); font-size: 8px; color: var(--muted); letter-spacing: 1px; }
-
-.verdict-reason {
-  margin-top: 16px; font-size: 13px; color: var(--muted);
-  line-height: 1.6; font-family: var(--mono);
-  padding: 12px 14px; background: var(--panel3); border-radius: 8px;
-  border-left: 2px solid var(--border2);
-}
-.verdict-reason.fake { border-left-color: rgba(255,51,102,0.4); }
-
-/* ── Score bars ── */
-.scores-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
-.scores-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
-.score-row { margin-bottom: 16px; }
-.score-row:last-child { margin-bottom: 0; }
-.score-meta { display: flex; justify-content: space-between; margin-bottom: 7px; font-family: var(--mono); font-size: 11px; color: var(--muted); }
-.bar-track { height: 8px; background: var(--panel3); border-radius: 4px; overflow: hidden; }
-.bar-fill { height: 100%; border-radius: 4px; transition: width 1s cubic-bezier(.4,0,.2,1); width: 0; }
-.bar-real { background: linear-gradient(90deg, rgba(0,255,170,0.5), var(--green)); }
-.bar-fake { background: linear-gradient(90deg, rgba(255,51,102,0.5), var(--red)); }
-
-/* ── Features radar / bars ── */
-.explain-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
-.explain-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
-
-.feat-rows {}
-.feat-row { margin-bottom: 13px; }
-.feat-row:last-child { margin-bottom: 0; }
-.feat-meta { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
-.feat-name { font-size: 12px; color: var(--text); font-family: var(--mono); }
-.feat-badge { font-family: var(--mono); font-size: 10px; color: var(--muted); }
-.feat-track { height: 5px; background: var(--panel3); border-radius: 3px; overflow: hidden; }
-.feat-fill {
-  height: 100%; border-radius: 3px;
-  background: linear-gradient(90deg, var(--cyan-dim), var(--cyan));
-  transition: width 1s cubic-bezier(.4,0,.2,1); width: 0;
-}
-
-/* Radar canvas */
-.radar-wrap { display: flex; justify-content: center; margin-bottom: 16px; }
-canvas#radarChart { display: block; }
-
-/* ── Stats grid ── */
-.stats-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
-.stats-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
-.stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
-.stat-cell { background: var(--panel2); border-radius: 10px; padding: 14px 12px; border: 1px solid var(--border); }
-.stat-val { font-family: var(--mono); font-size: 20px; font-weight: 700; margin-bottom: 4px; }
-.stat-label { font-family: var(--mono); font-size: 9px; color: var(--muted); letter-spacing: 1.5px; text-transform: uppercase; }
-
-/* ── History log ── */
-.history-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-top: 32px; display: none; }
-.history-card.show { display: block; }
-.history-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.history-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; }
-.history-clear {
-  font-family: var(--mono); font-size: 10px; color: var(--muted);
-  background: none; border: 1px solid var(--border); border-radius: 5px;
-  padding: 4px 10px; cursor: pointer; transition: all 0.15s;
-}
-.history-clear:hover { color: var(--red); border-color: rgba(255,51,102,0.3); }
-.history-list { display: flex; flex-direction: column; gap: 8px; }
-.history-item {
-  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
-  background: var(--panel2); border-radius: 10px; border: 1px solid var(--border);
-  font-family: var(--mono); font-size: 11px;
-  animation: fadeUp 0.3s ease;
-}
-.history-tag {
-  padding: 3px 8px; border-radius: 5px; font-size: 9px; font-weight: 700;
-  letter-spacing: 1px; flex-shrink: 0;
-}
-.history-tag.real { background: rgba(0,255,170,0.1); color: var(--green); }
-.history-tag.fake { background: rgba(255,51,102,0.1); color: var(--red); }
-.history-fname { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-conf { color: var(--muted); flex-shrink: 0; }
-.history-time { color: var(--muted2); font-size: 10px; flex-shrink: 0; }
-
-/* ── Spectral visualizer ── */
-.spectral-card { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 20px 22px; margin-bottom: 20px; }
-.spectral-title { font-family: var(--mono); font-size: 10px; letter-spacing: 3px; color: var(--muted); text-transform: uppercase; margin-bottom: 16px; }
-canvas#spectralViz { width: 100%; height: 100px; display: block; border-radius: 8px; background: var(--panel3); }
-
-/* ── Reset button ── */
-.reset-btn {
-  width: 100%; background: transparent; border: 1px solid var(--border);
-  color: var(--muted); border-radius: 10px; padding: 12px;
-  cursor: pointer; font-size: 13px; font-family: var(--sans);
-  transition: all 0.15s; margin-top: 4px;
-}
-.reset-btn:hover { border-color: var(--cyan); color: var(--cyan); }
-
-/* ── Footer ── */
-footer {
-  text-align: center; margin-top: 60px;
-  font-family: var(--mono); font-size: 10px; color: var(--muted2);
-  letter-spacing: 2px;
-}
-footer span { color: var(--muted); }
-
-/* ── Scrollbar ── */
-::-webkit-scrollbar { width: 5px; }
-::-webkit-scrollbar-track { background: var(--bg); }
-::-webkit-scrollbar-thumb { background: var(--muted2); border-radius: 3px; }
-
-@media(max-width:600px) {
-  .stats-grid { grid-template-columns: repeat(2,1fr); }
-  .samples-grid { grid-template-columns: 1fr; }
-}
-</style>
+<meta name="description" content="Detect AI-generated and cloned voices with VoiceGuard. 270-feature ML pipeline with MFCC, spectral, and prosody analysis."/>
+<link rel="stylesheet" href="styles.css"/>
 </head>
 <body>
 <div class="bg-layer"></div>
 <div class="bg-grid"></div>
+<canvas id="particleCanvas"></canvas>
 
 <div class="app">
 <div class="main-col">
@@ -481,53 +31,69 @@ footer span { color: var(--muted); }
     </div>
   </header>
 
+  <!-- Mode Tabs -->
+  <div class="mode-tabs">
+    <button class="mode-tab active" data-mode="upload" onclick="switchMode('upload')">📁 Upload File</button>
+    <button class="mode-tab" data-mode="mic" onclick="switchMode('mic')">🎤 Live Mic</button>
+  </div>
+
   <!-- API Warning -->
   <div class="api-warn" id="apiWarn">
     ⚠ Backend offline — running in <strong>demo simulation mode</strong>.
     Start the server: <code>uvicorn api.server:app --port 8000</code>
   </div>
 
-  <!-- Error message -->
+  <!-- Error -->
   <div class="error-msg" id="errorMsg"></div>
 
-  <!-- Upload card -->
-  <div class="card" id="uploadCard">
-    <div class="card-header">// Input — audio file</div>
-    <div class="dropzone" id="dropzone">
-      <!--
-        FIX: was accept=".wav,.mp3,.flac,.ogg,.m4a" which blocked .aac, .opus, .wma etc.
-        Now accepts audio/* (all audio MIME types) plus a broad extension fallback.
-        The backend validates the actual content, not just the extension.
-      -->
-      <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.wma,.aiff,.aif,.au,.amr,.webm,.3gp,.caf,.gsm"/>
-      <span class="dz-icon">🎙</span>
-      <div class="dz-title">Drop audio file here</div>
-      <div class="dz-sub">Any audio format · wav · mp3 · flac · ogg · m4a · aac · opus · wma · aiff · and more · max 50 MB</div>
-    </div>
+  <!-- Upload Section -->
+  <div id="uploadSection">
+    <div class="card" id="uploadCard">
+      <div class="card-header">// Input — audio file</div>
+      <div class="dropzone" id="dropzone">
+        <input type="file" id="fileInput" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.wma,.aiff,.aif,.au,.amr,.webm,.3gp,.caf,.gsm"/>
+        <span class="dz-icon">🎙</span>
+        <div class="dz-title">Drop audio file here</div>
+        <div class="dz-sub">Any audio format · wav · mp3 · flac · ogg · m4a · aac · opus · wma · aiff · and more · max 50 MB</div>
+      </div>
 
-    <div class="or-div">or try a sample</div>
-    <div class="samples-wrap">
-      <div class="samples-grid">
-        <button class="sample-btn" onclick="loadSample('real_1')">
-          <span class="stag stag-r">REAL</span> Human voice #1
-        </button>
-        <button class="sample-btn" onclick="loadSample('real_2')">
-          <span class="stag stag-r">REAL</span> Human voice #2
-        </button>
-        <button class="sample-btn" onclick="loadSample('fake_1')">
-          <span class="stag stag-f">FAKE</span> ElevenLabs clone
-        </button>
-        <button class="sample-btn" onclick="loadSample('fake_2')">
-          <span class="stag stag-f">FAKE</span> TTS synthetic
-        </button>
+      <div class="or-div">or try a sample</div>
+      <div class="samples-wrap">
+        <div class="samples-grid">
+          <button class="sample-btn" onclick="loadSample('real_1')">
+            <span class="stag stag-r">REAL</span> Human voice #1
+          </button>
+          <button class="sample-btn" onclick="loadSample('real_2')">
+            <span class="stag stag-r">REAL</span> Human voice #2
+          </button>
+          <button class="sample-btn" onclick="loadSample('fake_1')">
+            <span class="stag stag-f">FAKE</span> ElevenLabs clone
+          </button>
+          <button class="sample-btn" onclick="loadSample('fake_2')">
+            <span class="stag stag-f">FAKE</span> TTS synthetic
+          </button>
+        </div>
+      </div>
+
+      <!-- Waveform -->
+      <div class="wave-panel" id="wavePanel">
+        <div class="wave-filename" id="waveFilename">—</div>
+        <canvas id="waveform"></canvas>
+        <audio id="player" controls></audio>
       </div>
     </div>
+  </div>
 
-    <!-- Waveform panel (shown after file load) -->
-    <div class="wave-panel" id="wavePanel">
-      <div class="wave-filename" id="waveFilename">—</div>
-      <canvas id="waveform"></canvas>
-      <audio id="player" controls></audio>
+  <!-- Mic Section -->
+  <div id="micSection" style="display:none">
+    <div class="card">
+      <div class="card-header">// Input — live microphone</div>
+      <div class="mic-panel show">
+        <div class="mic-btn" id="micBtn">🎤</div>
+        <div class="mic-timer" id="micTimer">00:00</div>
+        <div class="mic-hint" id="micHint">Click to start recording</div>
+        <canvas id="micWaveform"></canvas>
+      </div>
     </div>
   </div>
 
@@ -557,7 +123,7 @@ footer span { color: var(--muted); }
   <!-- Result -->
   <div class="result" id="result">
 
-    <!-- Verdict banner -->
+    <!-- Verdict -->
     <div class="verdict-banner" id="verdictBanner">
       <div class="verdict-top">
         <div class="verdict-left">
@@ -578,8 +144,8 @@ footer span { color: var(--muted); }
       <div class="verdict-reason" id="verdictReason"></div>
     </div>
 
-    <!-- Score bars -->
-    <div class="scores-card">
+    <!-- Scores -->
+    <div class="scores-card reveal">
       <div class="scores-title">// Probability scores</div>
       <div class="score-row">
         <div class="score-meta">
@@ -597,14 +163,31 @@ footer span { color: var(--muted); }
       </div>
     </div>
 
-    <!-- Spectral visualizer -->
-    <div class="spectral-card">
+    <!-- Temporal Timeline -->
+    <div class="timeline-card reveal">
+      <div class="timeline-title">// Temporal confidence timeline</div>
+      <canvas id="timelineChart"></canvas>
+      <div class="timeline-legend">
+        <span><div class="dot-f"></div> Fake region</span>
+        <span><div class="dot-r"></div> Real region</span>
+      </div>
+    </div>
+
+    <!-- Spectral -->
+    <div class="spectral-card reveal">
       <div class="spectral-title">// Spectral fingerprint</div>
       <canvas id="spectralViz"></canvas>
     </div>
 
-    <!-- Feature importance radar + bars -->
-    <div class="explain-card">
+    <!-- Audio DNA -->
+    <div class="dna-card reveal">
+      <div class="dna-title">// Audio DNA fingerprint</div>
+      <canvas id="dnaCanvas" width="220" height="220"></canvas>
+      <div class="dna-label" id="dnaLabel"></div>
+    </div>
+
+    <!-- Feature importance -->
+    <div class="explain-card reveal">
       <div class="explain-title">// Feature importance · top 5 signals</div>
       <div class="radar-wrap">
         <canvas id="radarChart" width="240" height="180"></canvas>
@@ -613,7 +196,7 @@ footer span { color: var(--muted); }
     </div>
 
     <!-- Stats -->
-    <div class="stats-card">
+    <div class="stats-card reveal">
       <div class="stats-title">// Analysis metadata</div>
       <div class="stats-grid">
         <div class="stat-cell">
@@ -635,10 +218,38 @@ footer span { color: var(--muted); }
       </div>
     </div>
 
-    <button class="reset-btn" onclick="resetAll()">↩ &nbsp; Analyze another clip</button>
+    <!-- Action row -->
+    <div class="action-row">
+      <button class="export-btn" onclick="exportReport()">📄 Export Report</button>
+      <button class="reset-btn" onclick="resetAll()" style="flex:1">↩ &nbsp; Analyze another clip</button>
+    </div>
   </div>
 
-  <!-- History log -->
+  <!-- Threat Dashboard -->
+  <div class="dashboard-card" id="dashboardCard" style="display:none">
+    <div class="dashboard-title">// Threat intelligence dashboard</div>
+    <div class="dashboard-grid">
+      <div class="dash-stat">
+        <div class="dash-stat-val" id="dashTotal" style="color:var(--cyan)">0</div>
+        <div class="dash-stat-label">Total Analyses</div>
+      </div>
+      <div class="dash-stat">
+        <div class="dash-stat-val" id="dashFakeRate" style="color:var(--green)">0%</div>
+        <div class="dash-stat-label">Fake Rate</div>
+      </div>
+      <div style="text-align:center;padding:12px">
+        <canvas id="dashPie" width="100" height="100"></canvas>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:6px">DISTRIBUTION</div>
+      </div>
+      <div class="threat-gauge">
+        <canvas id="threatGauge" width="120" height="70"></canvas>
+        <div class="threat-level" id="threatLabel">LOW</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--muted);margin-top:4px">THREAT LEVEL</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History -->
   <div class="history-card" id="historyCard">
     <div class="history-header">
       <div class="history-title">// Session history</div>
@@ -651,440 +262,15 @@ footer span { color: var(--muted); }
 </div>
 </div>
 
-<script>
-/* ─── State ─────────────────────────────────────── */
-// FIX: Allow overriding API URL via ?api= query param for easy deployment
-const params = new URLSearchParams(window.location.search);
-const API = params.get('api') || 'http://localhost:8000';
-let currentFile = null, apiLive = false;
-let analysisHistory = [];
+<!-- Keyboard hints -->
+<div class="kbd-hints">
+  <span><span class="kbd">Space</span> Analyze</span>
+  <span><span class="kbd">R</span> Reset</span>
+  <span><span class="kbd">M</span> Mic</span>
+  <span><span class="kbd">E</span> Export</span>
+</div>
 
-/* ─── API health check ──────────────────────────── */
-// FIX: Added timeout so the page doesn't hang for 30s if server is unreachable
-const healthCtrl = new AbortController();
-const healthTimeout = setTimeout(() => healthCtrl.abort(), 4000);
-
-fetch(`${API}/health`, { signal: healthCtrl.signal })
-  .then(r => {
-    clearTimeout(healthTimeout);
-    if (r.ok) {
-      apiLive = true;
-      dot('live'); txt('Inference server online — real-time detection active');
-    } else throw 0;
-  })
-  .catch(() => {
-    clearTimeout(healthTimeout);
-    dot('offline'); txt('Server offline — demo simulation mode');
-    show('apiWarn');
-  });
-
-function dot(cls) { el('statusDot').className = 'status-dot ' + cls; }
-function txt(t)   { el('statusText').textContent = t; }
-
-/* ─── DOM helpers ───────────────────────────────── */
-const el    = id => document.getElementById(id);
-const show  = id => el(id).classList.add('show');
-const hide  = id => el(id).classList.remove('show');
-
-function showError(msg) {
-  const e = el('errorMsg');
-  e.textContent = '⚠ ' + msg;
-  e.classList.add('show');
-  setTimeout(() => e.classList.remove('show'), 6000);
-}
-
-/* ─── Drag & drop ───────────────────────────────── */
-const dz = el('dropzone');
-dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('drag');
-  const f = e.dataTransfer.files[0]; if (f) loadFile(f);
-});
-el('fileInput').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
-
-function loadFile(file) {
-  // FIX: removed client-side extension whitelist — backend validates content
-  // Only enforce size limit on client side to give instant feedback
-  if (file.size > 50 * 1024 * 1024) {
-    showError(`File too large (${(file.size/1024/1024).toFixed(1)} MB). Max: 50 MB`);
-    return;
-  }
-  currentFile = file;
-  const url = URL.createObjectURL(file);
-  showWavePanel(url, file.name);
-}
-
-/* ─── Sample clips ──────────────────────────────── */
-const SAMPLES = {
-  real_1: { name: 'human_voice_01.wav',    label: 'REAL' },
-  real_2: { name: 'human_voice_02.wav',    label: 'REAL' },
-  fake_1: { name: 'elevenlabs_clone.wav',  label: 'FAKE' },
-  fake_2: { name: 'tts_synthetic.wav',     label: 'FAKE' },
-};
-function loadSample(id) {
-  currentFile = { name: SAMPLES[id].name, _demo: SAMPLES[id].label, size: 80000 };
-  showWavePanel(null, SAMPLES[id].name);
-  drawDemoWaveform(id.startsWith('real'));
-}
-
-/* ─── Waveform panel ────────────────────────────── */
-function showWavePanel(url, name) {
-  el('waveFilename').textContent = '📂 ' + name;
-  const player = el('player');
-  if (url) {
-    player.src = url; player.style.display = '';
-    drawRealWaveform(url);
-  } else {
-    player.style.display = 'none';
-  }
-  el('wavePanel').classList.add('show');
-  el('analyzeBtn').classList.add('show');
-  hide('result'); hide('processing');
-  el('result').className = 'result';
-}
-
-async function drawRealWaveform(url) {
-  try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const buf = await (await fetch(url)).arrayBuffer();
-    const decoded = await ctx.decodeAudioData(buf);
-    renderWaveform(decoded.getChannelData(0));
-  } catch { drawDemoWaveform(true); }
-}
-
-function drawDemoWaveform(isReal) {
-  const d = new Float32Array(1000);
-  for (let i = 0; i < d.length; i++) {
-    d[i] = isReal
-      ? (Math.sin(i * .13) * .6 + Math.sin(i * .31) * .3) * (.5 + .5 * Math.random())
-      : (Math.sin(i * .11) * .8) * (.85 + .15 * Math.random());
-  }
-  renderWaveform(d);
-}
-
-function renderWaveform(data) {
-  const canvas = el('waveform');
-  const dpr = window.devicePixelRatio || 1;
-  const W = (canvas.offsetWidth || 800) * dpr;
-  const H = 140;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-  const step = Math.ceil(data.length / W);
-  const grad = ctx.createLinearGradient(0, 0, W, 0);
-  grad.addColorStop(0, 'rgba(0,210,255,0.3)');
-  grad.addColorStop(0.5, 'rgba(0,210,255,0.8)');
-  grad.addColorStop(1, 'rgba(0,210,255,0.3)');
-  ctx.strokeStyle = grad;
-  ctx.lineWidth = 1.2;
-  ctx.beginPath();
-  for (let i = 0; i < W; i++) {
-    let mn = 1, mx = -1;
-    for (let j = 0; j < step; j++) {
-      const v = data[i * step + j] || 0;
-      if (v < mn) mn = v; if (v > mx) mx = v;
-    }
-    ctx.moveTo(i, (1 + mn) * H / 2);
-    ctx.lineTo(i, Math.max(1, (1 + mx) * H / 2));
-  }
-  ctx.stroke();
-  // Centre line
-  ctx.strokeStyle = 'rgba(0,210,255,0.08)';
-  ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(0, H / 2); ctx.lineTo(W, H / 2); ctx.stroke();
-}
-
-/* ─── Processing animation ──────────────────────── */
-const STEPS = ['step0','step1','step2','step3','step4','step5'];
-let stepTimer = null;
-
-function startStepAnim() {
-  let i = 0;
-  STEPS.forEach(s => el(s).className = 'proc-step');
-  stepTimer = setInterval(() => {
-    if (i > 0) el(STEPS[i - 1]).className = 'proc-step done';
-    if (i < STEPS.length) { el(STEPS[i]).className = 'proc-step active'; i++; }
-    else { clearInterval(stepTimer); }
-  }, 420);
-}
-function endStepAnim() {
-  clearInterval(stepTimer);
-  STEPS.forEach(s => el(s).className = 'proc-step done');
-}
-
-/* ─── Analyze ───────────────────────────────────── */
-async function analyze() {
-  if (!currentFile) return;
-  const btn = el('analyzeBtn');
-  btn.disabled = true;
-  hide('errorMsg');
-  show('processing'); hide('result');
-  startStepAnim();
-
-  let data;
-  if (apiLive && currentFile instanceof File) {
-    const form = new FormData(); form.append('file', currentFile);
-    try {
-      const r = await fetch(`${API}/predict`, { method: 'POST', body: form });
-      data = await r.json();
-      if (!r.ok) {
-        // FIX: show the actual server error instead of silently falling back to simulation
-        const errMsg = data.detail || JSON.stringify(data);
-        throw new Error(errMsg);
-      }
-    } catch (err) {
-      endStepAnim();
-      hide('processing');
-      btn.disabled = false;
-      showError('Server error: ' + err.message + ' — falling back to simulation.');
-      // Fallback to simulation so user still gets a result
-      data = simulateResult(currentFile.name);
-    }
-  } else {
-    await new Promise(r => setTimeout(r, 2800));
-    data = simulateResult(currentFile._demo || currentFile.name);
-  }
-
-  endStepAnim();
-  await new Promise(r => setTimeout(r, 300));
-  hide('processing');
-  if (data) { showResult(data); addHistory(data); }
-  btn.disabled = false;
-}
-
-/* ─── Simulate result ───────────────────────────── */
-function simulateResult(hint) {
-  const h = typeof hint === 'string' ? hint.toLowerCase() : '';
-  const isFake = hint === 'FAKE' || h.includes('clone') || h.includes('fake') || h.includes('tts') || h.includes('synthetic') || h.includes('eleven');
-  const fake_score = isFake ? 0.74 + Math.random() * .2 : 0.04 + Math.random() * .16;
-  const real_score = 1 - fake_score;
-  const label = fake_score > 0.5 ? 'FAKE' : 'REAL';
-  return {
-    label, fake_score: +fake_score.toFixed(4), real_score: +real_score.toFixed(4),
-    confidence: +Math.max(fake_score, real_score).toFixed(4),
-    features: 270,
-    processing_time_ms: 120 + Math.floor(Math.random() * 80),
-    filename: (currentFile && currentFile.name) || 'demo.wav',
-    verdict_reason: isFake
-      ? `Flagged as synthetic. Key signal: Spectral flatness. Confidence ${Math.round(fake_score * 100)}% — patterns match AI-generated speech training corpus.`
-      : `Likely authentic human speech. Key signal: Pitch variation & vibrato. Confidence ${Math.round(real_score * 100)}% — natural prosody consistent with real voice.`,
-    top_features: isFake ? [
-      { name: 'Spectral flatness',        key: 'spectral_flatness', value: 0.312, weight: 18.4 },
-      { name: 'Pitch variation (f0_std)', key: 'f0_std',            value: 2.1,   weight: 14.2 },
-      { name: 'Voiced ratio',             key: 'voiced_ratio',      value: 0.68,  weight: 11.7 },
-      { name: 'Spectral centroid',        key: 'spectral_centroid', value: 1842,  weight: 9.8  },
-      { name: 'Zero-crossing rate',       key: 'zcr',               value: 0.091, weight: 8.3  },
-    ] : [
-      { name: 'Pitch variation (f0_std)', key: 'f0_std',            value: 18.4,  weight: 16.1 },
-      { name: 'Voiced ratio',             key: 'voiced_ratio',      value: 0.82,  weight: 13.5 },
-      { name: 'Spectral flatness',        key: 'spectral_flatness', value: 0.041, weight: 10.2 },
-      { name: 'Spectral centroid',        key: 'spectral_centroid', value: 2210,  weight: 9.1  },
-      { name: 'Zero-crossing rate',       key: 'zcr',               value: 0.074, weight: 7.8  },
-    ],
-  };
-}
-
-/* ─── Show result ───────────────────────────────── */
-function showResult(data) {
-  const isFake = data.label === 'FAKE';
-  const color  = isFake ? 'var(--red)' : 'var(--green)';
-  const r      = el('result');
-  r.className  = 'result show';
-
-  // Verdict
-  el('verdictBanner').className = `verdict-banner ${isFake ? 'fake' : 'real'}`;
-  el('verdictWord').textContent  = data.label;
-  el('verdictWord').className    = `verdict-word ${isFake ? 'fake' : 'real'}`;
-  el('verdictSub').textContent   = isFake ? 'Synthetic / AI-cloned speech detected' : 'Authentic human voice — no spoofing detected';
-  el('verdictReason').textContent = data.verdict_reason || '';
-  el('verdictReason').className   = `verdict-reason ${isFake ? 'fake' : ''}`;
-
-  // Confidence arc
-  const confPct = Math.round(data.confidence * 100);
-  el('confPct').textContent = confPct + '%';
-  el('confPct').style.color = color;
-  const arc = el('confArc');
-  arc.style.stroke = color;
-  setTimeout(() => { arc.style.strokeDashoffset = 245 * (1 - data.confidence); }, 50);
-
-  // Score bars
-  const rPct = Math.round(data.real_score * 100);
-  const fPct = Math.round(data.fake_score * 100);
-  el('realPct').textContent = rPct + '%';
-  el('fakePct').textContent = fPct + '%';
-  setTimeout(() => {
-    el('realBar').style.width = rPct + '%';
-    el('fakeBar').style.width = fPct + '%';
-  }, 100);
-
-  // Stats
-  el('statConf').textContent  = confPct + '%';
-  el('statFeats').textContent = data.features;
-  el('statMs').textContent    = data.processing_time_ms;
-  // FIX: safely extract format extension even if filename has no dot
-  const fname = data.filename || '';
-  const dotIdx = fname.lastIndexOf('.');
-  el('statFmt').textContent = dotIdx >= 0 ? fname.slice(dotIdx + 1).toUpperCase() : '—';
-
-  // Feature bars
-  const feats = data.top_features || [];
-  if (feats.length) {
-    const maxW = Math.max(...feats.map(f => f.weight));
-    el('featRows').innerHTML = feats.map(f => `
-      <div class="feat-row">
-        <div class="feat-meta">
-          <div class="feat-name">${f.name}</div>
-          <div class="feat-badge">${f.weight}% &nbsp;·&nbsp; val: ${f.value}</div>
-        </div>
-        <div class="feat-track">
-          <div class="feat-fill" id="ff_${f.key}" style="width:0%"></div>
-        </div>
-      </div>`).join('');
-    setTimeout(() => {
-      feats.forEach(f => {
-        const el2 = document.getElementById('ff_' + f.key);
-        if (el2) el2.style.width = Math.round(f.weight / maxW * 100) + '%';
-      });
-    }, 150);
-    drawRadar(feats, isFake);
-  }
-
-  // Spectral fingerprint
-  drawSpectral(isFake);
-}
-
-/* ─── Radar chart ───────────────────────────────── */
-function drawRadar(feats, isFake) {
-  const canvas = el('radarChart');
-  const W = 240, H = 180, cx = W/2, cy = H/2, r = 70;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-  const n = feats.length;
-  const angles = feats.map((_, i) => (i / n) * Math.PI * 2 - Math.PI / 2);
-  const max = Math.max(...feats.map(f => f.weight));
-
-  [0.25, 0.5, 0.75, 1.0].forEach(t => {
-    ctx.beginPath();
-    angles.forEach((a, i) => {
-      const x = cx + Math.cos(a) * r * t;
-      const y = cy + Math.sin(a) * r * t;
-      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-    });
-    ctx.closePath();
-    ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
-  });
-
-  angles.forEach(a => {
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
-    ctx.strokeStyle = 'rgba(0,210,255,0.08)'; ctx.lineWidth = 1; ctx.stroke();
-  });
-
-  const color = isFake ? '255,51,102' : '0,255,170';
-  ctx.beginPath();
-  feats.forEach((f, i) => {
-    const t = f.weight / max;
-    const x = cx + Math.cos(angles[i]) * r * t;
-    const y = cy + Math.sin(angles[i]) * r * t;
-    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-  });
-  ctx.closePath();
-  ctx.fillStyle = `rgba(${color},0.12)`; ctx.fill();
-  ctx.strokeStyle = `rgba(${color},0.8)`; ctx.lineWidth = 1.5; ctx.stroke();
-
-  feats.forEach((f, i) => {
-    const t = f.weight / max;
-    const x = cx + Math.cos(angles[i]) * r * t;
-    const y = cy + Math.sin(angles[i]) * r * t;
-    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2);
-    ctx.fillStyle = `rgb(${color})`; ctx.fill();
-  });
-
-  ctx.font = '9px JetBrains Mono, monospace';
-  ctx.fillStyle = 'rgba(180,210,240,0.6)';
-  ctx.textAlign = 'center';
-  feats.forEach((f, i) => {
-    const x = cx + Math.cos(angles[i]) * (r + 18);
-    const y = cy + Math.sin(angles[i]) * (r + 18) + 3;
-    const shortName = f.name.split('(')[0].trim().split(' ').slice(-1)[0];
-    ctx.fillText(shortName, x, y);
-  });
-}
-
-/* ─── Spectral fingerprint visualizer ──────────────── */
-function drawSpectral(isFake) {
-  const canvas = el('spectralViz');
-  const dpr = window.devicePixelRatio || 1;
-  const W = (canvas.offsetWidth || 800) * dpr;
-  const H = 100 * dpr;
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-
-  const bars = Math.floor(W / (3 * dpr));
-  for (let i = 0; i < bars; i++) {
-    const x = i * 3 * dpr;
-    let energy;
-    if (isFake) {
-      energy = 0.5 + 0.45 * Math.sin(i * 0.18) + 0.05 * (Math.random() - 0.5);
-    } else {
-      energy = 0.3 + 0.4 * Math.abs(Math.sin(i * 0.13 + Math.sin(i * 0.07) * 2)) + 0.2 * Math.random();
-    }
-    energy = Math.max(0.05, Math.min(1, energy));
-    const h = energy * (H - 4 * dpr);
-    const hue = isFake ? `rgba(255,51,102,${0.3 + energy * 0.5})` : `rgba(0,210,255,${0.25 + energy * 0.5})`;
-    ctx.fillStyle = hue;
-    ctx.fillRect(x, H - h, 2 * dpr, h);
-  }
-}
-
-/* ─── History log ───────────────────────────────── */
-function addHistory(data) {
-  const now = new Date();
-  const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  analysisHistory.unshift({ ...data, time });
-  renderHistory();
-  show('historyCard');
-}
-
-function renderHistory() {
-  el('historyList').innerHTML = analysisHistory.slice(0, 8).map(h => {
-    const isFake = h.label === 'FAKE';
-    const conf = Math.round(h.confidence * 100);
-    const fname = (h.filename || 'unknown').substring(0, 28);
-    return `
-      <div class="history-item">
-        <span class="history-tag ${isFake ? 'fake' : 'real'}">${h.label}</span>
-        <span class="history-fname">${fname}</span>
-        <span class="history-conf">${conf}%</span>
-        <span class="history-time">${h.time}</span>
-      </div>`;
-  }).join('');
-}
-
-function clearHistory() {
-  analysisHistory = [];
-  el('historyList').innerHTML = '';
-  hide('historyCard');
-}
-
-/* ─── Reset ─────────────────────────────────────── */
-function resetAll() {
-  currentFile = null;
-  el('wavePanel').classList.remove('show');
-  el('analyzeBtn').classList.remove('show');
-  el('analyzeBtn').disabled = false;
-  hide('result'); hide('processing'); hide('errorMsg');
-  el('result').className = 'result';
-  el('fileInput').value = '';
-  el('player').src = '';
-  el('confArc').style.strokeDashoffset = '245';
-  el('realBar').style.width = '0%';
-  el('fakeBar').style.width = '0%';
-}
-</script>
+<script src="app-core.js"></script>
+<script src="app-features.js"></script>
 </body>
 </html>

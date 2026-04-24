@@ -132,6 +132,74 @@ def predict(audio_path: str) -> dict:
     }
 
 
+def predict_segments(audio_path: str, segment_duration: float = 0.5) -> dict:
+    """
+    Run inference on overlapping segments of the audio file.
+    Returns per-segment confidence scores for temporal analysis.
+    """
+    _load()
+
+    import librosa
+    from features import SAMPLE_RATE, extract_mfcc, extract_spectral, extract_chroma, extract_prosody
+
+    # Load full audio
+    try:
+        y, sr = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
+    except Exception:
+        from features import _load_via_pydub
+        y = _load_via_pydub(audio_path)
+        sr = SAMPLE_RATE
+
+    if len(y) == 0:
+        return {"segments": [], "overall": predict(audio_path)}
+
+    segment_samples = int(segment_duration * sr)
+    hop_samples = segment_samples // 2  # 50% overlap
+    min_samples = 1024  # minimum viable segment
+
+    segments = []
+    pos = 0
+    while pos < len(y):
+        end = min(pos + segment_samples, len(y))
+        chunk = y[pos:end]
+
+        # Pad short chunks
+        if len(chunk) < min_samples:
+            chunk = np.pad(chunk, (0, min_samples - len(chunk)))
+
+        # Pad to features.py expectations
+        target = int(SAMPLE_RATE * 3.0)
+        chunk_padded = np.pad(chunk, (0, max(0, target - len(chunk))))[:target].astype(np.float32)
+
+        try:
+            vec = np.concatenate([
+                extract_mfcc(chunk_padded),
+                extract_spectral(chunk_padded),
+                extract_chroma(chunk_padded),
+                extract_prosody(chunk_padded),
+            ]).astype(np.float32)
+            vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+            vec_s = _scaler.transform(vec.reshape(1, -1))
+            proba = _model.predict_proba(vec_s)[0]
+            classes = list(_model.classes_)
+            fake_idx = classes.index(1) if 1 in classes else 1
+            fake_prob = float(proba[fake_idx])
+        except Exception:
+            fake_prob = 0.5
+
+        segments.append({
+            "start_sec": round(pos / sr, 2),
+            "end_sec": round(end / sr, 2),
+            "fake_score": round(fake_prob, 4),
+            "real_score": round(1 - fake_prob, 4),
+        })
+
+        pos += hop_samples
+
+    overall = predict(audio_path)
+    return {"segments": segments, "overall": overall}
+
+
 if __name__ == "__main__":
     import sys, json
     if len(sys.argv) < 2:

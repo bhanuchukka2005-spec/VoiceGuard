@@ -25,7 +25,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent   # project root
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "model"))
 
-from model.predict import predict                   # noqa: E402
+from model.predict import predict, predict_segments  # noqa: E402
 
 app = FastAPI(title="VoiceGuard API", version="2.2.0")
 app.add_middleware(
@@ -318,3 +318,76 @@ async def model_info():
         "dataset":        "ASVspoof 2019 LA / synthetic",
         "version":        "2.2.0",
     }
+
+
+@app.post("/predict/segments")
+async def predict_temporal(file: UploadFile = File(...)):
+    """Analyse audio in temporal segments for confidence timeline."""
+    content, tmp_path = await _save_upload(file)
+
+    if not _is_audio(file.filename or "", content):
+        os.unlink(tmp_path)
+        raise HTTPException(400, "File does not appear to be audio.")
+
+    try:
+        t0 = time.perf_counter()
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, predict_segments, tmp_path)
+        ms = (time.perf_counter() - t0) * 1000
+        result["processing_time_ms"] = round(ms, 1)
+        result["filename"] = file.filename or "unknown"
+        _stats["total"] += 1
+        _inc_label(result["overall"]["label"])
+    except Exception as exc:
+        _stats["errors"] += 1
+        raise HTTPException(500, f"Segment analysis error: {exc}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return result
+
+
+@app.post("/predict/compare")
+async def predict_compare(file_a: UploadFile = File(...), file_b: UploadFile = File(...)):
+    """Compare two audio files side-by-side."""
+    results = {}
+    for label, file in [("a", file_a), ("b", file_b)]:
+        content, tmp_path = await _save_upload(file)
+        if not _is_audio(file.filename or "", content):
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise HTTPException(400, f"File {label.upper()} does not appear to be audio.")
+
+        try:
+            t0 = time.perf_counter()
+            r = await _run_predict(tmp_path)
+            ms = (time.perf_counter() - t0) * 1000
+            top_feats = r.get("top_features", [])
+            results[label] = {
+                "label": r["label"],
+                "confidence": r["confidence"],
+                "fake_score": r["fake_score"],
+                "real_score": r["real_score"],
+                "features": r["features"],
+                "processing_time_ms": round(ms, 1),
+                "filename": file.filename or "unknown",
+                "top_features": top_feats,
+                "verdict_reason": _verdict(r["label"], r["fake_score"], top_feats),
+            }
+            _stats["total"] += 1
+            _inc_label(r["label"])
+        except Exception as exc:
+            _stats["errors"] += 1
+            raise HTTPException(500, f"Compare error on file {label.upper()}: {exc}")
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    return results
