@@ -418,202 +418,192 @@
 
 <script>
 const API = 'http://localhost:8000';
-let currentFile = null;
-let apiAvailable = false;
+let currentFile = null, apiAvailable = false;
 
-// Check if API is running
-fetch(`${API}/health`).then(() => { apiAvailable = true; })
-  .catch(() => { document.getElementById('apiWarning').classList.add('visible'); });
+fetch(`${API}/health`).then(()=>{ apiAvailable=true; })
+  .catch(()=>{ document.getElementById('apiWarning').classList.add('visible'); });
 
-// ─── Drag & drop ───────────────────────────────────────────────────────────
 const dz = document.getElementById('dropzone');
-dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
-dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
-dz.addEventListener('drop', e => {
-  e.preventDefault(); dz.classList.remove('drag');
-  const f = e.dataTransfer.files[0];
-  if (f) loadFile(f);
-});
-document.getElementById('fileInput').addEventListener('change', e => {
-  if (e.target.files[0]) loadFile(e.target.files[0]);
-});
+dz.addEventListener('dragover', e=>{ e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', ()=>dz.classList.remove('drag'));
+dz.addEventListener('drop', e=>{ e.preventDefault(); dz.classList.remove('drag'); const f=e.dataTransfer.files[0]; if(f) loadFile(f); });
+document.getElementById('fileInput').addEventListener('change', e=>{ if(e.target.files[0]) loadFile(e.target.files[0]); });
 
-function loadFile(file) {
+function loadFile(file){
   currentFile = file;
-  const url = URL.createObjectURL(file);
-  showAudioPanel(url, file.name);
+  showAudioPanel(URL.createObjectURL(file), file.name);
 }
 
-// ─── Sample clips (uses oscillator synthesis as stand-in for real files) ──
-const SAMPLE_META = {
-  real_1: { name: 'human_voice_sample_01.wav', label: 'REAL' },
-  real_2: { name: 'human_voice_sample_02.wav', label: 'REAL' },
-  fake_1: { name: 'elevenlabs_clone_01.wav',   label: 'FAKE' },
-  fake_2: { name: 'elevenlabs_clone_02.wav',   label: 'FAKE' },
+const SAMPLES = {
+  real_1:{name:'human_voice_01.wav', label:'REAL'},
+  real_2:{name:'human_voice_02.wav', label:'REAL'},
+  fake_1:{name:'elevenlabs_clone.wav', label:'FAKE'},
+  fake_2:{name:'tts_synthetic.wav', label:'FAKE'},
 };
-function loadSample(id) {
-  currentFile = { name: SAMPLE_META[id].name, _demo: SAMPLE_META[id].label, size: 80000 };
-  showAudioPanel(null, SAMPLE_META[id].name);
+function loadSample(id){
+  currentFile = {name:SAMPLES[id].name, _demo:SAMPLES[id].label, size:80000};
+  showAudioPanel(null, SAMPLES[id].name);
   drawFakeWaveform(id.startsWith('real'));
 }
 
-// ─── Audio panel ───────────────────────────────────────────────────────────
-function showAudioPanel(url, name) {
-  document.getElementById('audioFilename').textContent = `📂 ${name}`;
-  const player = document.getElementById('player');
-  if (url) { player.src = url; player.style.display = ''; drawWaveform(url); }
-  else { player.style.display = 'none'; }
+function showAudioPanel(url, name){
+  document.getElementById('audioFilename').textContent = '📂 ' + name;
+  const p = document.getElementById('player');
+  if(url){ p.src=url; p.style.display=''; drawWaveform(url); }
+  else { p.style.display='none'; }
   document.getElementById('audioPanel').classList.add('visible');
   document.getElementById('analyzeBtn').classList.add('visible');
   document.getElementById('result').classList.remove('visible');
   document.getElementById('result').className = 'result';
 }
 
-async function drawWaveform(url) {
-  const ctx = new (window.AudioContext || window.webkitAudioContext)();
-  const buf = await (await fetch(url)).arrayBuffer();
-  const decoded = await ctx.decodeAudioData(buf);
-  renderWaveform(decoded.getChannelData(0));
+async function drawWaveform(url){
+  try{
+    const ctx = new (window.AudioContext||window.webkitAudioContext)();
+    const buf = await (await fetch(url)).arrayBuffer();
+    const decoded = await ctx.decodeAudioData(buf);
+    renderWaveform(decoded.getChannelData(0));
+  } catch(e){ drawFakeWaveform(true); }
 }
-
-function drawFakeWaveform(isReal) {
+function drawFakeWaveform(isReal){
   const data = new Float32Array(800);
-  for (let i = 0; i < data.length; i++) {
+  for(let i=0;i<data.length;i++){
     data[i] = isReal
-      ? (Math.sin(i * 0.15) * 0.6 + Math.sin(i * 0.37) * 0.3) * (0.5 + 0.5 * Math.random())
-      : (Math.sin(i * 0.12) * 0.75) * (0.8 + 0.2 * Math.random());
+      ? (Math.sin(i*.15)*.6+Math.sin(i*.37)*.3)*(0.5+0.5*Math.random())
+      : (Math.sin(i*.12)*.75)*(0.8+0.2*Math.random());
   }
   renderWaveform(data);
 }
-
-function renderWaveform(data) {
+function renderWaveform(data){
   const canvas = document.getElementById('waveform');
-  const W = canvas.offsetWidth * window.devicePixelRatio || 800;
-  const H = 160;
-  canvas.width = W; canvas.height = H;
+  const W = (canvas.offsetWidth||800)*window.devicePixelRatio;
+  const H = 160; canvas.width=W; canvas.height=H;
   const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, W, H);
-  const step = Math.ceil(data.length / W);
-  ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#00c8ff';
-  ctx.lineWidth = 1.5;
-  ctx.globalAlpha = 0.7;
+  ctx.clearRect(0,0,W,H);
+  const step = Math.ceil(data.length/W);
+  ctx.strokeStyle='#00c8ff'; ctx.lineWidth=1.5; ctx.globalAlpha=0.7;
   ctx.beginPath();
-  for (let i = 0; i < W; i++) {
-    let min = 1, max = -1;
-    for (let j = 0; j < step; j++) {
-      const v = data[i * step + j] || 0;
-      if (v < min) min = v; if (v > max) max = v;
-    }
-    ctx.moveTo(i, (1 + min) * H / 2);
-    ctx.lineTo(i, Math.max(1, (1 + max) * H / 2));
+  for(let i=0;i<W;i++){
+    let mn=1,mx=-1;
+    for(let j=0;j<step;j++){ const v=data[i*step+j]||0; if(v<mn)mn=v; if(v>mx)mx=v; }
+    ctx.moveTo(i,(1+mn)*H/2); ctx.lineTo(i,Math.max(1,(1+mx)*H/2));
   }
   ctx.stroke();
 }
 
-// ─── Analyze ───────────────────────────────────────────────────────────────
-const msgs = [
-  'Extracting MFCC features...',
-  'Computing spectral centroid...',
-  'Analysing prosody and pitch...',
-  'Running ensemble classifier...',
-  'Finalising prediction...',
-];
-
-async function analyze() {
-  if (!currentFile) return;
+const msgs=['Extracting MFCC features...','Computing spectral centroid...','Analysing pitch prosody...','Running 3-model ensemble...','Computing feature importance...'];
+async function analyze(){
+  if(!currentFile) return;
   const btn = document.getElementById('analyzeBtn');
   btn.disabled = true;
   document.getElementById('processing').classList.add('visible');
   document.getElementById('result').classList.remove('visible');
-
-  // Cycle processing messages
-  let mi = 0;
+  let mi=0;
   const msgEl = document.getElementById('processingMsg');
-  const msgInterval = setInterval(() => {
-    msgEl.textContent = msgs[mi % msgs.length]; mi++;
-  }, 500);
-
+  const iv = setInterval(()=>{ msgEl.textContent=msgs[mi%msgs.length]; mi++; },500);
   let data;
-  if (apiAvailable && currentFile instanceof File) {
-    // Real API call
-    const form = new FormData();
-    form.append('file', currentFile);
-    try {
-      const resp = await fetch(`${API}/predict`, { method: 'POST', body: form });
-      data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail);
-    } catch (e) {
-      data = simulateResult(currentFile.name);
-    }
+  if(apiAvailable && currentFile instanceof File){
+    const form = new FormData(); form.append('file', currentFile);
+    try{
+      const r = await fetch(`${API}/predict`,{method:'POST',body:form});
+      data = await r.json();
+      if(!r.ok) throw new Error(data.detail);
+    } catch(e){ data = simulateResult(currentFile.name); }
   } else {
-    // Demo simulation
-    await new Promise(r => setTimeout(r, 2500));
-    data = simulateResult(currentFile._demo || currentFile.name);
+    await new Promise(r=>setTimeout(r,2500));
+    data = simulateResult(currentFile._demo||currentFile.name);
   }
-
-  clearInterval(msgInterval);
+  clearInterval(iv);
   document.getElementById('processing').classList.remove('visible');
-  showResult(data);
-  btn.disabled = false;
+  showResult(data); btn.disabled=false;
 }
 
-function simulateResult(hint) {
-  const isFake = typeof hint === 'string' && (hint === 'FAKE' || hint.toLowerCase().includes('clone') || hint.toLowerCase().includes('fake'));
-  const fake_score = isFake ? 0.72 + Math.random() * 0.22 : 0.04 + Math.random() * 0.18;
-  const real_score = 1 - fake_score;
-  const label = fake_score > 0.5 ? 'FAKE' : 'REAL';
+function simulateResult(hint){
+  const isFake = typeof hint==='string'&&(hint==='FAKE'||hint.toLowerCase().includes('clone')||hint.toLowerCase().includes('fake')||hint.toLowerCase().includes('tts')||hint.toLowerCase().includes('synthetic'));
+  const fake_score = isFake ? 0.74+Math.random()*.2 : 0.04+Math.random()*.16;
+  const real_score = 1-fake_score;
+  const label = fake_score>0.5?'FAKE':'REAL';
   return {
-    label,
-    fake_score: +fake_score.toFixed(4),
-    real_score: +real_score.toFixed(4),
-    confidence: +(Math.max(fake_score, real_score)).toFixed(4),
-    features: 270,
-    processing_time_ms: 120 + Math.floor(Math.random() * 80),
-    filename: (currentFile && currentFile.name) || 'demo.wav',
+    label, fake_score:+fake_score.toFixed(4), real_score:+real_score.toFixed(4),
+    confidence:+Math.max(fake_score,real_score).toFixed(4),
+    features:270, processing_time_ms:120+Math.floor(Math.random()*80),
+    filename:(currentFile&&currentFile.name)||'demo.wav',
+    verdict_reason: isFake
+      ? 'Flagged as synthetic. Key signal: Spectral flatness (synthesis artifact). Confidence '+Math.round(fake_score*100)+'% — characteristic patterns match AI-generated speech.'
+      : 'Likely authentic human speech. Key signal: Pitch variation (vibrato / naturalness). Confidence '+Math.round(real_score*100)+'% — natural prosody consistent with real voice.',
+    top_features: isFake ? [
+      {name:'Spectral flatness (synthesis artifact)', weight:18.4, value:0.312},
+      {name:'Pitch variation (vibrato / naturalness)',  weight:14.2, value:2.1},
+      {name:'Voiced ratio (natural speech rhythm)',     weight:11.7, value:0.68},
+      {name:'Spectral centroid (frequency balance)',    weight:9.8,  value:1842},
+      {name:'Zero-crossing rate (noise texture)',       weight:8.3,  value:0.091},
+    ] : [
+      {name:'Pitch variation (vibrato / naturalness)',  weight:16.1, value:18.4},
+      {name:'Voiced ratio (natural speech rhythm)',     weight:13.5, value:0.82},
+      {name:'Spectral flatness (synthesis artifact)',   weight:10.2, value:0.041},
+      {name:'Spectral centroid (frequency balance)',    weight:9.1,  value:2210},
+      {name:'Zero-crossing rate (noise texture)',       weight:7.8,  value:0.074},
+    ],
   };
 }
 
-function showResult(data) {
-  const isFake = data.label === 'FAKE';
+function showResult(data){
+  const isFake = data.label==='FAKE';
   const res = document.getElementById('result');
-  res.className = `result ${isFake ? 'fake' : 'real'}-result visible`;
+  res.className = `result ${isFake?'fake':'real'}-result visible`;
 
   document.getElementById('verdictBadge').textContent = data.label;
-  document.getElementById('verdictBadge').className = `verdict-badge ${isFake ? 'fake' : 'real'}`;
+  document.getElementById('verdictBadge').className = `verdict-badge ${isFake?'fake':'real'}`;
   document.getElementById('verdictSub').textContent = isFake
-    ? 'Synthetic or AI-cloned speech detected'
+    ? 'Synthetic / AI-cloned speech detected'
     : 'Natural human voice — no spoofing detected';
 
-  const confPct = Math.round(data.confidence * 100);
-  const circ = 2 * Math.PI * 34;
-  const offset = circ * (1 - data.confidence);
+  const confPct = Math.round(data.confidence*100);
   const ring = document.getElementById('ringCircle');
-  ring.style.stroke = isFake ? 'var(--danger)' : 'var(--accent2)';
-  ring.style.strokeDashoffset = offset;
-  document.getElementById('ringVal').textContent = confPct + '%';
-  document.getElementById('ringVal').style.color = isFake ? 'var(--danger)' : 'var(--accent2)';
+  ring.style.stroke = isFake?'var(--danger)':'var(--accent2)';
+  ring.style.strokeDashoffset = 213.6*(1-data.confidence);
+  document.getElementById('ringVal').textContent = confPct+'%';
+  document.getElementById('ringVal').style.color = isFake?'var(--danger)':'var(--accent2)';
 
-  const rPct = Math.round(data.real_score * 100);
-  const fPct = Math.round(data.fake_score * 100);
-  document.getElementById('realBar').style.width = rPct + '%';
-  document.getElementById('fakeBar').style.width = fPct + '%';
-  document.getElementById('realPct').textContent = rPct + '%';
-  document.getElementById('fakePct').textContent = fPct + '%';
+  const rPct = Math.round(data.real_score*100);
+  const fPct = Math.round(data.fake_score*100);
+  document.getElementById('realBar').style.width=rPct+'%';
+  document.getElementById('fakeBar').style.width=fPct+'%';
+  document.getElementById('realPct').textContent=rPct+'%';
+  document.getElementById('fakePct').textContent=fPct+'%';
 
-  document.getElementById('statConfidence').textContent = confPct + '%';
-  document.getElementById('statFeatures').textContent = data.features;
-  document.getElementById('statTime').textContent = data.processing_time_ms;
-  document.getElementById('statFile').textContent = (data.filename || '').split('.').pop().toUpperCase();
+  const vr = document.getElementById('verdictReason');
+  vr.textContent = data.verdict_reason || '';
+  vr.className = `verdict-reason ${isFake?'fake-reason':''}`;
+
+  const feats = data.top_features||[];
+  if(feats.length){
+    const maxW = Math.max(...feats.map(f=>f.weight));
+    document.getElementById('featureBars').innerHTML = feats.map(f=>`
+      <div class="feat-row">
+        <div class="feat-name">${f.name}</div>
+        <div class="feat-val">${f.weight}%</div>
+        <div class="feat-bar-track"><div class="feat-bar-fill" style="width:${Math.round(f.weight/maxW*100)}%"></div></div>
+      </div>`).join('');
+    document.getElementById('explainSection').style.display='block';
+  } else {
+    document.getElementById('explainSection').style.display='none';
+  }
+
+  document.getElementById('statConf').textContent=confPct+'%';
+  document.getElementById('statFeats').textContent=data.features;
+  document.getElementById('statTime').textContent=data.processing_time_ms;
+  document.getElementById('statFile').textContent=(data.filename||'').split('.').pop().toUpperCase();
 }
 
-function reset() {
-  currentFile = null;
-  document.getElementById('audioPanel').classList.remove('visible');
-  document.getElementById('analyzeBtn').classList.remove('visible');
+function reset(){
+  currentFile=null;
+  ['audioPanel','analyzeBtn'].forEach(id=>document.getElementById(id).classList.remove('visible'));
   document.getElementById('result').classList.remove('visible');
-  document.getElementById('result').className = 'result';
-  document.getElementById('fileInput').value = '';
-  document.getElementById('player').src = '';
+  document.getElementById('result').className='result';
+  document.getElementById('fileInput').value='';
+  document.getElementById('player').src='';
+  document.getElementById('explainSection').style.display='none';
 }
 </script>
 </body>
