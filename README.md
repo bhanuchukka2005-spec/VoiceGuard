@@ -174,10 +174,8 @@ python model/train.py --data_dir ./data/LA
 - Mobile app (Android & iOS)
 - Browser extension for live call verification
 - Deep learning model (CNN / Transformer)
-- Blockchain-based audio verification certificates
-- WhatsApp / Telegram bot integration
 - Partial deepfake detection with confidence timeline graph
-
+- use postgresql for permanant data storage
 ---
 
 ## 📄 License
