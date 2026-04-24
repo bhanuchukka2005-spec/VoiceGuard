@@ -104,35 +104,59 @@ function drawDNA(data,isFake){
 }
 
 /* ═══ 3. TEMPORAL CONFIDENCE TIMELINE ═══ */
-function drawTimeline(segments,isFake){
+function drawTimeline(segments,isFake,isRealData){
   const c=el('timelineChart');if(!c||!segments||!segments.length)return;
+
+  // Show LIVE ML DATA or SIMULATED badge
+  const titleEl=c.closest('.timeline-card')?.querySelector('.timeline-title');
+  if(titleEl){
+    const badge=isRealData
+      ?'<span style="font-size:9px;background:rgba(0,255,170,0.15);color:#00ffaa;border:1px solid rgba(0,255,170,0.4);padding:2px 8px;border-radius:3px;letter-spacing:1px;vertical-align:middle;margin-left:8px">● LIVE ML DATA</span>'
+      :'<span style="font-size:9px;background:rgba(255,183,0,0.12);color:#ffb700;border:1px solid rgba(255,183,0,0.3);padding:2px 8px;border-radius:3px;letter-spacing:1px;vertical-align:middle;margin-left:8px">◌ SIMULATED</span>';
+    titleEl.innerHTML='// Temporal confidence timeline'+badge;
+  }
+
   const dpr=window.devicePixelRatio||1;
-  const W=(c.offsetWidth||700)*dpr,H=120*dpr;
+  const W=(c.offsetWidth||700)*dpr,H=130*dpr;
   c.width=W;c.height=H;
   const ctx=c.getContext('2d');ctx.clearRect(0,0,W,H);
-  const pad={l:40*dpr,r:10*dpr,t:15*dpr,b:25*dpr};
+  const pad={l:44*dpr,r:12*dpr,t:16*dpr,b:28*dpr};
   const gW=W-pad.l-pad.r,gH=H-pad.t-pad.b;
-  const maxT=segments[segments.length-1].end_sec;
+  const maxT=segments[segments.length-1].end_sec||3;
 
-  // Threshold line at 0.5
+  // Shade FAKE regions
+  segments.forEach(s=>{
+    if(s.fake_score>0.5){
+      const x=pad.l+(s.start_sec/maxT)*gW;
+      const w=((s.end_sec-s.start_sec)/maxT)*gW;
+      const alpha=0.04+(s.fake_score-0.5)*0.14;
+      ctx.fillStyle=`rgba(255,51,102,${alpha})`;
+      ctx.fillRect(x,pad.t,w,gH);
+    }
+  });
+
+  // Threshold line
   const threshY=pad.t+gH*0.5;
-  ctx.strokeStyle='rgba(255,255,255,0.1)';ctx.lineWidth=1;ctx.setLineDash([4*dpr,4*dpr]);
+  ctx.strokeStyle='rgba(255,255,255,0.1)';ctx.lineWidth=1*dpr;ctx.setLineDash([4*dpr,4*dpr]);
   ctx.beginPath();ctx.moveTo(pad.l,threshY);ctx.lineTo(W-pad.r,threshY);ctx.stroke();ctx.setLineDash([]);
-  ctx.font=`${8*dpr}px JetBrains Mono`;ctx.fillStyle='rgba(255,255,255,0.2)';ctx.textAlign='right';
-  ctx.fillText('FAKE',pad.l-4*dpr,pad.t+10*dpr);ctx.fillText('REAL',pad.l-4*dpr,H-pad.b-2*dpr);
+  ctx.font=`${7.5*dpr}px JetBrains Mono`;ctx.fillStyle='rgba(255,255,255,0.2)';ctx.textAlign='right';
+  ctx.fillText('FAKE',pad.l-5*dpr,pad.t+9*dpr);
+  ctx.fillText('REAL',pad.l-5*dpr,H-pad.b-2*dpr);
 
-  // Area fill
+  // Area under curve
   ctx.beginPath();
   segments.forEach((s,i)=>{
     const x=pad.l+(s.start_sec/maxT)*gW;
     const y=pad.t+gH*(1-s.fake_score);
     i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
   });
-  const lastSeg=segments[segments.length-1];
-  ctx.lineTo(pad.l+(lastSeg.end_sec/maxT)*gW,pad.t+gH*(1-lastSeg.fake_score));
+  const last=segments[segments.length-1];
+  ctx.lineTo(pad.l+(last.end_sec/maxT)*gW,pad.t+gH*(1-last.fake_score));
   ctx.lineTo(pad.l+gW,H-pad.b);ctx.lineTo(pad.l,H-pad.b);ctx.closePath();
   const grd=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
-  grd.addColorStop(0,'rgba(255,51,102,0.15)');grd.addColorStop(0.5,'rgba(255,255,255,0.02)');grd.addColorStop(1,'rgba(0,255,170,0.1)');
+  grd.addColorStop(0,'rgba(255,51,102,0.18)');
+  grd.addColorStop(0.5,'rgba(255,255,255,0.02)');
+  grd.addColorStop(1,'rgba(0,255,170,0.12)');
   ctx.fillStyle=grd;ctx.fill();
 
   // Line
@@ -142,22 +166,39 @@ function drawTimeline(segments,isFake){
     const y=pad.t+gH*(1-s.fake_score);
     i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
   });
-  ctx.lineTo(pad.l+(lastSeg.end_sec/maxT)*gW,pad.t+gH*(1-lastSeg.fake_score));
-  const lineGrd=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
-  lineGrd.addColorStop(0,'#ff3366');lineGrd.addColorStop(0.5,'#ffb700');lineGrd.addColorStop(1,'#00ffaa');
-  ctx.strokeStyle=lineGrd;ctx.lineWidth=2*dpr;ctx.stroke();
+  ctx.lineTo(pad.l+(last.end_sec/maxT)*gW,pad.t+gH*(1-last.fake_score));
+  const lg=ctx.createLinearGradient(0,pad.t,0,H-pad.b);
+  lg.addColorStop(0,'#ff3366');lg.addColorStop(0.5,'#ffb700');lg.addColorStop(1,'#00ffaa');
+  ctx.strokeStyle=lg;ctx.lineWidth=2*dpr;ctx.stroke();
 
-  // Dots
+  // Dots + glow on high-fake peaks
   segments.forEach(s=>{
     const x=pad.l+(s.start_sec/maxT)*gW;
     const y=pad.t+gH*(1-s.fake_score);
-    ctx.beginPath();ctx.arc(x,y,3*dpr,0,Math.PI*2);
+    if(s.fake_score>0.65){
+      ctx.beginPath();ctx.arc(x,y,(isRealData?5:4)*dpr,0,Math.PI*2);
+      ctx.fillStyle='rgba(255,51,102,0.18)';ctx.fill();
+    }
+    ctx.beginPath();ctx.arc(x,y,(isRealData?3.5:2.5)*dpr,0,Math.PI*2);
     ctx.fillStyle=s.fake_score>0.5?'#ff3366':'#00ffaa';ctx.fill();
   });
 
-  // Time labels
-  ctx.font=`${8*dpr}px JetBrains Mono`;ctx.fillStyle='rgba(255,255,255,0.3)';ctx.textAlign='center';
-  for(let t=0;t<=maxT;t+=0.5){
+  // Peak annotation (real data only)
+  if(isRealData&&segments.length>0){
+    const peak=segments.reduce((a,b)=>a.fake_score>b.fake_score?a:b);
+    if(peak.fake_score>0.6){
+      const px=pad.l+(peak.start_sec/maxT)*gW;
+      const py=pad.t+gH*(1-peak.fake_score)-12*dpr;
+      ctx.font=`bold ${8*dpr}px JetBrains Mono`;
+      ctx.fillStyle='#ff3366';ctx.textAlign='center';
+      ctx.fillText('▲ '+Math.round(peak.fake_score*100)+'%',px,py);
+    }
+  }
+
+  // Time axis
+  ctx.font=`${7.5*dpr}px JetBrains Mono`;ctx.fillStyle='rgba(255,255,255,0.28)';ctx.textAlign='center';
+  const step=maxT<=4?0.5:maxT<=8?1:2;
+  for(let t=0;t<=maxT;t+=step){
     const x=pad.l+(t/maxT)*gW;
     ctx.fillText(t.toFixed(1)+'s',x,H-4*dpr);
   }
@@ -461,3 +502,139 @@ showResult=function(data){
   animateCounter('confPct',Math.round(data.confidence*100));
   animateCounter('statConf',Math.round(data.confidence*100));
 };
+
+/* ═══ 13. VOICE STRESS ANALYSIS PANEL ═══
+   Shows 5 biometric indicators comparing this voice to human norms.
+   Each metric reveals a different dimension of vocal authenticity.
+   Data comes from /predict/stress when server is live, else demo values.
+*/
+function renderStressPanel(stress, isFake){
+  // Create panel if it doesn't exist
+  let panel = el('stressPanel');
+  if(!panel){
+    panel = document.createElement('div');
+    panel.id = 'stressPanel';
+    panel.className = 'stress-card reveal';
+    // Insert after the timeline card
+    const timeline = document.querySelector('.timeline-card');
+    if(timeline && timeline.parentNode){
+      timeline.parentNode.insertBefore(panel, timeline.nextSibling);
+    } else {
+      const resultDiv = el('result');
+      if(resultDiv) resultDiv.appendChild(panel);
+    }
+    // Trigger reveal animation
+    setTimeout(()=>{
+      const obs = new IntersectionObserver(entries=>{
+        entries.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible')});
+      },{threshold:0.1});
+      obs.observe(panel);
+    },100);
+  }
+
+  const metrics = [
+    {
+      key:'pitch_stability',
+      label:'Pitch Stability',
+      desc:'AI voices have unnaturally stable pitch. Humans wobble naturally.',
+      humanNorm:'Low (0.1–0.5)',
+      fakeNorm:'High (0.8–1.0)',
+      // For REAL: low stability is good. For FAKE: high stability is suspicious.
+      // Display as "human-likeness" — invert for pitch_stability
+      humanLikeness: isFake
+        ? Math.round((1 - stress.pitch_stability) * 100)
+        : Math.round((1 - stress.pitch_stability) * 100),
+      raw: stress.pitch_stability,
+      icon:'〰️'
+    },
+    {
+      key:'rhythm_naturalness',
+      label:'Rhythm Naturalness',
+      desc:'Natural speech has irregular timing. AI speech is too metronomic.',
+      humanNorm:'High (0.6–0.9)',
+      fakeNorm:'Low (0.0–0.3)',
+      humanLikeness: Math.round(stress.rhythm_naturalness * 100),
+      raw: stress.rhythm_naturalness,
+      icon:'🎵'
+    },
+    {
+      key:'breath_patterns',
+      label:'Breath Patterns',
+      desc:'Humans pause to breathe. AI-generated speech often has no breath pauses.',
+      humanNorm:'High (0.5–0.9)',
+      fakeNorm:'Low (0.0–0.2)',
+      humanLikeness: Math.round(stress.breath_patterns * 100),
+      raw: stress.breath_patterns,
+      icon:'💨'
+    },
+    {
+      key:'micro_variations',
+      label:'Micro Variations',
+      desc:'Human voices have tiny imperfections in every syllable. AI is too clean.',
+      humanNorm:'High (0.6–0.9)',
+      fakeNorm:'Low (0.0–0.2)',
+      humanLikeness: Math.round(stress.micro_variations * 100),
+      raw: stress.micro_variations,
+      icon:'🔬'
+    },
+    {
+      key:'formant_stability',
+      label:'Formant Stability',
+      desc:'AI voices have artificially perfect formant transitions. Humans shift naturally.',
+      humanNorm:'Low (0.2–0.5)',
+      fakeNorm:'High (0.8–1.0)',
+      humanLikeness: Math.round((1 - stress.formant_stability) * 100),
+      raw: stress.formant_stability,
+      icon:'📊'
+    }
+  ];
+
+  const overallHuman = Math.round(metrics.reduce((s,m)=>s+m.humanLikeness,0)/metrics.length);
+  const demoTag = stress.is_demo
+    ? '<span style="font-size:9px;background:rgba(255,183,0,0.12);color:#ffb700;border:1px solid rgba(255,183,0,0.3);padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-left:8px">◌ ESTIMATED</span>'
+    : '<span style="font-size:9px;background:rgba(0,255,170,0.15);color:#00ffaa;border:1px solid rgba(0,255,170,0.4);padding:2px 7px;border-radius:3px;letter-spacing:1px;margin-left:8px">● LIVE DATA</span>';
+
+  panel.innerHTML = `
+    <div class="stress-title">// Voice biometric stress analysis ${demoTag}</div>
+    <div class="stress-overview">
+      <div class="stress-score-wrap">
+        <div class="stress-score" style="color:${overallHuman>60?'var(--green)':'var(--red)'}">
+          ${overallHuman}%
+        </div>
+        <div class="stress-score-label">Human Likeness Score</div>
+      </div>
+      <div class="stress-verdict" style="color:${isFake?'var(--red)':'var(--green)'}">
+        ${isFake
+          ? '⚠ Biometric signature inconsistent with human speech'
+          : '✓ Biometric signature consistent with human speech'}
+      </div>
+    </div>
+    <div class="stress-metrics">
+      ${metrics.map((m,i)=>`
+        <div class="stress-metric" style="animation-delay:${i*80}ms">
+          <div class="stress-metric-header">
+            <span class="stress-icon">${m.icon}</span>
+            <span class="stress-metric-label">${m.label}</span>
+            <span class="stress-metric-pct" style="color:${m.humanLikeness>60?'var(--green)':'var(--red)'}">${m.humanLikeness}%</span>
+          </div>
+          <div class="stress-bar-track">
+            <div class="stress-bar-fill" id="sb_${m.key}"
+              style="width:0%;background:${m.humanLikeness>60?'linear-gradient(90deg,rgba(0,255,170,0.5),#00ffaa)':'linear-gradient(90deg,rgba(255,51,102,0.5),#ff3366)'}">
+            </div>
+          </div>
+          <div class="stress-metric-desc">${m.desc}</div>
+        </div>
+      `).join('')}
+    </div>
+  `;
+
+  // Animate bars after render
+  setTimeout(()=>{
+    metrics.forEach(m=>{
+      const bar = document.getElementById('sb_'+m.key);
+      if(bar) bar.style.width = m.humanLikeness+'%';
+    });
+  }, 200);
+
+  panel.style.display = 'block';
+}

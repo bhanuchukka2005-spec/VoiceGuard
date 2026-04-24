@@ -276,3 +276,31 @@ footer span{color:var(--muted)}
   .dashboard-grid{grid-template-columns:1fr}
   .kbd-hints{display:none}
 }
+
+/* ═══ VOICE STRESS ANALYSIS PANEL ═══ */
+.stress-card{
+  background:var(--panel);backdrop-filter:blur(12px);
+  border:1px solid var(--border);border-radius:16px;
+  padding:20px 22px;margin-bottom:20px;
+  display:none;
+}
+.stress-card.reveal{opacity:0;transform:translateY(24px) scale(0.98);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1)}
+.stress-card.reveal.visible{opacity:1;transform:translateY(0) scale(1)}
+.stress-card:hover{border-color:var(--border2);transform:translateY(-1px);box-shadow:0 4px 20px rgba(0,210,255,0.05)}
+.stress-title{font-family:var(--mono);font-size:10px;letter-spacing:3px;color:var(--muted);text-transform:uppercase;margin-bottom:16px;display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.stress-overview{display:flex;align-items:center;gap:20px;margin-bottom:20px;padding:16px;background:var(--panel2);border-radius:12px;border:1px solid var(--border)}
+.stress-score{font-family:var(--mono);font-size:40px;font-weight:700;line-height:1}
+.stress-score-label{font-family:var(--mono);font-size:9px;color:var(--muted);letter-spacing:2px;text-transform:uppercase;margin-top:4px}
+.stress-verdict{font-family:var(--mono);font-size:11px;line-height:1.5;flex:1}
+.stress-metrics{display:flex;flex-direction:column;gap:14px}
+.stress-metric{background:var(--panel2);border-radius:10px;padding:12px 14px;border:1px solid var(--border);animation:fadeUp .4s ease both}
+.stress-metric:hover{border-color:var(--border2)}
+.stress-metric-header{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.stress-icon{font-size:14px}
+.stress-metric-label{font-family:var(--mono);font-size:11px;color:var(--text);flex:1}
+.stress-metric-pct{font-family:var(--mono);font-size:12px;font-weight:700}
+.stress-bar-track{height:5px;background:var(--panel3);border-radius:3px;overflow:hidden;margin-bottom:7px}
+.stress-bar-fill{height:100%;border-radius:3px;transition:width 1s cubic-bezier(.4,0,.2,1);width:0}
+.stress-metric-desc{font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.5}
+@keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@media(max-width:600px){.stress-overview{flex-direction:column;align-items:flex-start}}

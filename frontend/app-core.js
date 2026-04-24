@@ -88,15 +88,58 @@ function endStepAnim(){clearInterval(stepTimer);STEPS.forEach(s=>el(s).className
 /* ─── Analyze ─── */
 async function analyze(){
   if(!currentFile)return;
-  const btn=el('analyzeBtn');btn.disabled=true;hide('errorMsg');show('processing');hide('result');startStepAnim();
+  const btn=el('analyzeBtn');btn.disabled=true;
+  hide('errorMsg');show('processing');hide('result');startStepAnim();
   let data;
-  if(apiLive&&currentFile instanceof File){
-    const form=new FormData();form.append('file',currentFile);
-    try{const r=await fetch(`${API}/predict`,{method:'POST',body:form});data=await r.json();if(!r.ok)throw new Error(data.detail||JSON.stringify(data))}
-    catch(err){endStepAnim();hide('processing');btn.disabled=false;showError('Server error: '+err.message);data=simulateResult(currentFile.name)}
-  }else{await new Promise(r=>setTimeout(r,2800));data=simulateResult(currentFile._demo||currentFile.name)}
-  endStepAnim();await new Promise(r=>setTimeout(r,300));hide('processing');
-  if(data){showResult(data);addHistory(data);updateDashboard(data)}
+
+  if(apiLive && currentFile instanceof File){
+    try{
+      // ── Step 1: Main prediction ──────────────────────────────────
+      const form=new FormData();form.append('file',currentFile);
+      const r=await fetch(`${API}/predict`,{method:'POST',body:form});
+      if(!r.ok){const e=await r.json();throw new Error(e.detail||'Server error '+r.status)}
+      data=await r.json();
+
+      // ── Step 2: Segment timeline (real ML data) ──────────────────
+      try{
+        const segForm=new FormData();segForm.append('file',currentFile);
+        const segR=await fetch(`${API}/predict/segments`,{method:'POST',body:segForm});
+        if(segR.ok){
+          const segData=await segR.json();
+          if(segData.segments && segData.segments.length>0){
+            data.segments=segData.segments;
+            data._realSegments=true;
+          }
+        }
+      }catch(segErr){
+        console.warn('Segments fallback:',segErr.message);
+        data.segments=generateDemoSegments(data.label==='FAKE');
+        data._realSegments=false;
+      }
+
+      // ── Step 3: Voice stress analysis ───────────────────────────
+      try{
+        const stressForm=new FormData();stressForm.append('file',currentFile);
+        const stressR=await fetch(`${API}/predict/stress`,{method:'POST',body:stressForm});
+        if(stressR.ok){
+          data._stress=await stressR.json();
+        }
+      }catch(_){/* stress is optional */}
+
+    }catch(err){
+      endStepAnim();hide('processing');btn.disabled=false;
+      showError('Server error: '+err.message);
+      data=simulateResult(currentFile.name);
+    }
+  }else{
+    await new Promise(r=>setTimeout(r,2800));
+    data=simulateResult(currentFile._demo||currentFile.name);
+  }
+
+  endStepAnim();
+  await new Promise(r=>setTimeout(r,300));
+  hide('processing');
+  if(data){showResult(data);addHistory(data);updateDashboard(data);}
   btn.disabled=false;
 }
 
@@ -191,8 +234,9 @@ function showResult(data){
     drawRadar(feats,isFake);
   }
   drawSpectral(isFake);
-  drawTimeline(data.segments||generateDemoSegments(isFake),isFake);
+  drawTimeline(data.segments||generateDemoSegments(isFake),isFake,!!data._realSegments);
   drawDNA(data,isFake);
+  renderStressPanel(data._stress||generateDemoStress(isFake),isFake);
 }
 
 /* ─── Radar ─── */
@@ -219,20 +263,60 @@ function drawSpectral(isFake){
     ctx.fillStyle=isFake?`rgba(255,51,102,${.3+e*.5})`:`rgba(0,210,255,${.25+e*.5})`;ctx.fillRect(x,H-h,2*dpr,h)}
 }
 
-/* ─── History ─── */
-function addHistory(data){const now=new Date();const time=now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});analysisHistory.unshift({...data,time});renderHistory();show('historyCard')}
+/* ─── Demo stress data ─── */
+function generateDemoStress(isFake){
+  const R=()=>Math.random();
+  return{
+    pitch_stability:   isFake? +(0.88+R()*0.1).toFixed(3) : +(0.42+R()*0.25).toFixed(3),
+    rhythm_naturalness:isFake? +(0.12+R()*0.18).toFixed(3) : +(0.72+R()*0.2).toFixed(3),
+    breath_patterns:   isFake? +(0.05+R()*0.1).toFixed(3)  : +(0.65+R()*0.25).toFixed(3),
+    micro_variations:  isFake? +(0.08+R()*0.12).toFixed(3) : +(0.68+R()*0.2).toFixed(3),
+    formant_stability: isFake? +(0.91+R()*0.08).toFixed(3) : +(0.35+R()*0.3).toFixed(3),
+    is_demo:true
+  };
+}
+
+/* ─── History with localStorage persistence ─── */
+function addHistory(data){
+  const now=new Date();
+  const time=now.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  // Store only what's needed (no blobs/canvases)
+  const item={
+    label:data.label, confidence:data.confidence,
+    fake_score:data.fake_score, real_score:data.real_score,
+    features:data.features, processing_time_ms:data.processing_time_ms,
+    filename:data.filename, verdict_reason:data.verdict_reason,
+    top_features:data.top_features, time
+  };
+  analysisHistory.unshift(item);
+  // Persist to localStorage (keep last 20)
+  try{localStorage.setItem('vg_history',JSON.stringify(analysisHistory.slice(0,20)))}catch(_){}
+  renderHistory();show('historyCard');
+}
+
+function loadHistory(){
+  try{
+    const saved=localStorage.getItem('vg_history');
+    if(saved){analysisHistory=JSON.parse(saved);if(analysisHistory.length){renderHistory();show('historyCard')}}
+  }catch(_){}
+}
 function renderHistory(){
   el('historyList').innerHTML=analysisHistory.slice(0,8).map(h=>{const iF=h.label==='FAKE',c=Math.round(h.confidence*100),fn=(h.filename||'unknown').substring(0,28);
     return`<div class="history-item"><span class="history-tag ${iF?'fake':'real'}">${h.label}</span><span class="history-fname">${fn}</span><span class="history-conf">${c}%</span><span class="history-time">${h.time}</span></div>`}).join('');
 }
-function clearHistory(){analysisHistory=[];el('historyList').innerHTML='';hide('historyCard')}
+function clearHistory(){
+  analysisHistory=[];el('historyList').innerHTML='';hide('historyCard');
+  try{localStorage.removeItem('vg_history')}catch(_){}
+}
 
 /* ─── Reset ─── */
 function resetAll(){
   currentFile=null;el('wavePanel').classList.remove('show');el('analyzeBtn').classList.remove('show');el('analyzeBtn').disabled=false;
   hide('result');hide('processing');hide('errorMsg');el('result').className='result';el('fileInput').value='';el('player').src='';
   el('confArc').style.strokeDashoffset='245';el('realBar').style.width='0%';el('fakeBar').style.width='0%';
+  // hide stress panel too
+  const sp=el('stressPanel');if(sp)sp.style.display='none';
 }
 
 /* ─── Init ─── */
-document.addEventListener('DOMContentLoaded',()=>{initDropzone();initParticles();initKeyboard();initReveal()});
+document.addEventListener('DOMContentLoaded',()=>{initDropzone();initParticles();initKeyboard();initReveal();loadHistory();});

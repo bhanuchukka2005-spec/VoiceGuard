@@ -132,10 +132,11 @@ def predict(audio_path: str) -> dict:
     }
 
 
-def predict_segments(audio_path: str, segment_duration: float = 0.5) -> dict:
+def predict_segments(audio_path: str, segment_duration: float = 1.0) -> dict:
     """
     Run inference on overlapping segments of the audio file.
     Returns per-segment confidence scores for temporal analysis.
+    Uses 1-second windows with 50% overlap for better accuracy.
     """
     _load()
 
@@ -146,30 +147,44 @@ def predict_segments(audio_path: str, segment_duration: float = 0.5) -> dict:
     try:
         y, sr = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
     except Exception:
-        from features import _load_via_pydub
-        y = _load_via_pydub(audio_path)
-        sr = SAMPLE_RATE
+        try:
+            from features import _load_via_pydub
+            y = _load_via_pydub(audio_path)
+            sr = SAMPLE_RATE
+        except Exception:
+            return {"segments": [], "overall": predict(audio_path)}
 
     if len(y) == 0:
         return {"segments": [], "overall": predict(audio_path)}
 
+    # Use 1s windows — short enough for temporal resolution,
+    # long enough for MFCC / prosody to be meaningful
     segment_samples = int(segment_duration * sr)
-    hop_samples = segment_samples // 2  # 50% overlap
-    min_samples = 1024  # minimum viable segment
+    hop_samples = segment_samples // 2  # 50% overlap for smooth curve
+
+    # Need at least 2 frames for any feature to work
+    min_viable = 2048
+    target_len = int(SAMPLE_RATE * 3.0)  # pad to match training length
+
+    classes = list(_model.classes_)
+    fake_idx = classes.index(1) if 1 in classes else 1
 
     segments = []
     pos = 0
+    prev_fake = None  # for smoothing
+
     while pos < len(y):
         end = min(pos + segment_samples, len(y))
-        chunk = y[pos:end]
+        chunk = y[pos:end].copy()
 
-        # Pad short chunks
-        if len(chunk) < min_samples:
-            chunk = np.pad(chunk, (0, min_samples - len(chunk)))
+        # Skip truly empty chunks
+        if len(chunk) < min_viable or np.abs(chunk).max() < 1e-6:
+            pos += hop_samples
+            continue
 
-        # Pad to features.py expectations
-        target = int(SAMPLE_RATE * 3.0)
-        chunk_padded = np.pad(chunk, (0, max(0, target - len(chunk))))[:target].astype(np.float32)
+        # Pad chunk to training length so all feature extractors work correctly
+        chunk_padded = np.zeros(target_len, dtype=np.float32)
+        chunk_padded[:min(len(chunk), target_len)] = chunk[:min(len(chunk), target_len)]
 
         try:
             vec = np.concatenate([
@@ -178,20 +193,29 @@ def predict_segments(audio_path: str, segment_duration: float = 0.5) -> dict:
                 extract_chroma(chunk_padded),
                 extract_prosody(chunk_padded),
             ]).astype(np.float32)
-            vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+
+            # Replace NaN/Inf before scaling
+            if not np.isfinite(vec).all():
+                vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+
             vec_s = _scaler.transform(vec.reshape(1, -1))
             proba = _model.predict_proba(vec_s)[0]
-            classes = list(_model.classes_)
-            fake_idx = classes.index(1) if 1 in classes else 1
             fake_prob = float(proba[fake_idx])
-        except Exception:
-            fake_prob = 0.5
+
+            # Exponential smoothing to reduce jitter between segments
+            if prev_fake is not None:
+                fake_prob = 0.65 * fake_prob + 0.35 * prev_fake
+            prev_fake = fake_prob
+
+        except Exception as e:
+            # Use previous value or 0.5 fallback
+            fake_prob = prev_fake if prev_fake is not None else 0.5
 
         segments.append({
             "start_sec": round(pos / sr, 2),
-            "end_sec": round(end / sr, 2),
-            "fake_score": round(fake_prob, 4),
-            "real_score": round(1 - fake_prob, 4),
+            "end_sec":   round(end / sr, 2),
+            "fake_score": round(float(np.clip(fake_prob, 0.0, 1.0)), 4),
+            "real_score": round(float(np.clip(1.0 - fake_prob, 0.0, 1.0)), 4),
         })
 
         pos += hop_samples
