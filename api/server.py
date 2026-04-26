@@ -391,3 +391,98 @@ async def predict_compare(file_a: UploadFile = File(...), file_b: UploadFile = F
                 pass
 
     return results
+
+
+@app.post("/predict/stress")
+async def predict_stress(file: UploadFile = File(...)):
+    """
+    Compute voice biometric stress indicators.
+    Returns 5 scores measuring human-likeness of the voice:
+      pitch_stability, rhythm_naturalness, breath_patterns,
+      micro_variations, formant_stability.
+    All scores in [0, 1]. Higher = more human-like EXCEPT
+    pitch_stability and formant_stability (lower = more human).
+    """
+    content, tmp_path = await _save_upload(file)
+
+    if not _is_audio(file.filename or "", content):
+        os.unlink(tmp_path)
+        raise HTTPException(400, "File does not appear to be audio.")
+
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, _compute_stress, tmp_path)
+        _stats["total"] += 1
+    except Exception as exc:
+        _stats["errors"] += 1
+        raise HTTPException(500, f"Stress analysis error: {exc}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return result
+
+
+def _compute_stress(audio_path: str) -> dict:
+    """
+    Derive 5 biometric stress indicators from the audio features.
+    Uses the already-extracted feature vector — no extra ML inference needed.
+    """
+    import numpy as np
+    from model.predict import _load, _scaler, _model
+    from model.features import extract_with_names, load_audio, SAMPLE_RATE
+    import librosa
+
+    _load()
+
+    vec, named = extract_with_names(audio_path)
+    vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # ── Pitch Stability ──────────────────────────────────────────────────────
+    # High f0_std = natural variation = more human-like
+    # We invert so that 1.0 = max human-likeness
+    f0_std   = float(named.get("f0_std", 0.0))
+    # Typical human f0_std: 15–40 Hz. AI: 0–5 Hz.
+    pitch_stability = float(np.clip(f0_std / 40.0, 0.0, 1.0))
+
+    # ── Rhythm Naturalness ───────────────────────────────────────────────────
+    # ZCR variation across time indicates natural rhythm changes
+    # Use mfcc delta std as proxy for temporal dynamics
+    dmfcc_std_avg = float(np.mean([
+        named.get(f"dmfcc_{i}_std", 0.0) for i in range(5)
+    ]))
+    rhythm_naturalness = float(np.clip(dmfcc_std_avg / 8.0, 0.0, 1.0))
+
+    # ── Breath Patterns ──────────────────────────────────────────────────────
+    # voiced_ratio: humans pause to breathe → ratio < 1.0
+    # AI voices: voiced_ratio close to 1.0 (no breath pauses)
+    voiced_ratio = float(named.get("voiced_ratio", 1.0))
+    # More human-like if voiced_ratio is moderate (0.5–0.85)
+    breath_patterns = float(np.clip(1.0 - abs(voiced_ratio - 0.7) / 0.7, 0.0, 1.0))
+
+    # ── Micro Variations ─────────────────────────────────────────────────────
+    # Human voices have natural variation in MFCC std values
+    mfcc_std_avg = float(np.mean([
+        named.get(f"mfcc_{i}_std", 0.0) for i in range(10)
+    ]))
+    # Typical human range: 8–20. AI: 1–5.
+    micro_variations = float(np.clip(mfcc_std_avg / 20.0, 0.0, 1.0))
+
+    # ── Formant Stability ────────────────────────────────────────────────────
+    # Use spectral centroid variation as formant proxy
+    # High variation = natural human formant movement
+    sc = float(named.get("spectral_centroid", 0.0))
+    sb = float(named.get("spectral_bandwidth", 0.0))
+    # Humans: wide bandwidth relative to centroid
+    formant_naturalness = float(np.clip(sb / max(sc, 1.0), 0.0, 1.0))
+
+    return {
+        "pitch_stability":    round(pitch_stability,    3),
+        "rhythm_naturalness": round(rhythm_naturalness, 3),
+        "breath_patterns":    round(breath_patterns,    3),
+        "micro_variations":   round(micro_variations,   3),
+        "formant_stability":  round(formant_naturalness,3),
+        "is_demo": False,
+    }
