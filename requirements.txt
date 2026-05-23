@@ -1,7 +1,12 @@
-# VoiceGuard v2.2 — Python dependencies
+# VoiceGuard v2.3 — Python dependencies
+
+# Web framework
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9      # required for FastAPI file uploads
+
+# Rate limiting
+slowapi>=0.1.9
 
 # Audio processing
 librosa>=0.10.0
