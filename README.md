@@ -2,6 +2,7 @@
 
 > **AI-powered audio forensics platform** that detects synthetic and cloned voices using a 270-feature ML pipeline with temporal analysis, biometric stress scoring, and explainable AI.
 
+[![CI](https://github.com/your-team/voiceguard/actions/workflows/ci.yml/badge.svg)](https://github.com/your-team/voiceguard/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
 [![XGBoost](https://img.shields.io/badge/XGBoost-2.0+-orange?style=flat-square)](https://xgboost.readthedocs.io)
@@ -14,7 +15,7 @@
 
 VoiceGuard is a web application that takes any audio file and tells you — **is this voice REAL or AI-generated?** — with a confidence score, temporal analysis, and a full biometric breakdown.
 
-Built in 24 hours at **AIML Hackathon 2025** by a team of 4.
+Built in 24 hours at **AIML Hackathon 2026** by a team of 4.
 
 ---
 
@@ -47,6 +48,7 @@ Human ears can no longer tell the difference. **VoiceGuard can.**
 | 🌙 **Dark / Light Theme** | Toggle between themes, preference saved |
 | 🕐 **Session History** | All analyses saved, persists across page refreshes |
 | 🐳 **Docker Ready** | One command deployment |
+| 🚦 **Rate Limiting** | 30 req/min per IP on `/predict` |
 
 ---
 
@@ -63,6 +65,7 @@ cd voiceguard
 pip install -r requirements.txt
 
 # 3. Train the model (~60 seconds on synthetic data)
+#    ⚠ Synthetic mode only — see Dataset section for real data
 python model/train.py
 
 # 4. Start the backend server
@@ -100,6 +103,10 @@ python model/train.py --data_dir ./data/LA
 ```
 voiceguard/
 │
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # GitHub Actions CI pipeline
+│
 ├── api/
 │   └── server.py               # FastAPI backend — all endpoints
 │
@@ -107,8 +114,8 @@ voiceguard/
 │   ├── train.py                # Model training script
 │   ├── predict.py              # Inference + segment analysis
 │   ├── features.py             # 270-feature extraction pipeline
-│   ├── detector.joblib         # Trained ensemble model
-│   ├── scaler.joblib           # StandardScaler for features
+│   ├── detector.joblib         # Trained ensemble model (git-ignored)
+│   ├── scaler.joblib           # StandardScaler (git-ignored)
 │   └── feature_importance.json # Top feature weights
 │
 ├── frontend/
@@ -117,7 +124,11 @@ voiceguard/
 │   ├── app-core.js             # Core logic — upload, analyze, history
 │   └── app-features.js         # Visualizations — timeline, radar, DNA, stress
 │
+├── tests/
+│   └── test_api.py             # pytest API test suite
+│
 ├── Dockerfile                  # Container definition
+├── pytest.ini                  # pytest + asyncio config
 ├── requirements.txt            # Python dependencies
 └── README.md
 ```
@@ -130,6 +141,7 @@ voiceguard/
 User uploads audio file
          ↓
 FastAPI backend receives & validates file
+  (rejects: silent, < 0.5s, > 50 MB, non-audio)
          ↓
 features.py extracts 270 voice features:
   ├─ MFCC (240)      → vocal tract shape
@@ -144,7 +156,8 @@ StandardScaler normalizes all 270 features
   ├─ Gradient Boosting (weight 2) → sequential error correction
   └─ XGBoost (weight 2)           → fast, regularized boosting
          ↓
-predict/segments → per-second temporal analysis
+/predict/segments → per-second temporal analysis
+  (1s windows, 50% overlap, padded to 1s — not 3s)
          ↓
 Result: REAL ✅ or FAKE ❌
   + confidence score
@@ -164,16 +177,6 @@ Result: REAL ✅ or FAKE ❌
 | **Chroma + Contrast** | 12 pitch classes + 7 contrast bands | **19** | Tonal structure — AI lacks natural note variation |
 | **Prosody** | F0 mean, std, P10, P90, voiced ratio | **5** | Rhythm + breath — AI is too metronomic |
 | **Total** | | **270** | |
-
-### Top Features by Importance
-
-| Feature | Importance | What It Measures |
-|---------|-----------|-----------------|
-| mfcc_1_mean | 24.9% | Vocal tract shape |
-| mfcc_2_mean | 20.6% | Spectral envelope |
-| mfcc_2_std | 9.9% | Temporal consistency |
-| voiced_ratio | 7.3% | Natural speech rhythm |
-| mfcc_26_std | 4.8% | High-frequency variation |
 
 ---
 
@@ -202,7 +205,7 @@ Input: 270-dim feature vector (StandardScaler normalized)
 | Gradient Boosting | 300 trees, depth=4, lr=0.05 | 2 | Sequential tabular learning |
 | XGBoost | 300 trees, depth=5, lr=0.05 | 2 | Fast, regularized, robust |
 
-**Why ensemble?** Each model has different failure modes. Voting together reduces individual errors — consistently outperforms any single model by 3–8% AUC.
+**Why ensemble?** Each model has different failure modes. Voting together reduces individual errors.
 
 ---
 
@@ -210,15 +213,17 @@ Input: 270-dim feature vector (StandardScaler normalized)
 
 **Base URL:** `http://localhost:8000`
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/health` | Server + model health check |
-| `POST` | `/predict` | Single file deepfake analysis |
-| `POST` | `/predict/batch` | Up to 10 files at once |
-| `POST` | `/predict/segments` | Per-second temporal analysis |
-| `POST` | `/predict/compare` | Side-by-side comparison of 2 files |
-| `GET` | `/stats` | Session statistics |
-| `GET` | `/model/info` | Model metadata |
+| Method | Endpoint | Rate limit | Description |
+|--------|----------|-----------|-------------|
+| `GET` | `/health` | — | Server + model health check |
+| `GET` | `/model/info` | — | Model metadata |
+| `GET` | `/stats` | — | Session statistics |
+| `POST` | `/predict` | 30/min | Single file deepfake analysis |
+| `POST` | `/predict/batch` | 10/min | Up to 10 files at once |
+| `POST` | `/predict/segments` | 20/min | Per-second temporal analysis |
+| `POST` | `/predict/compare` | 15/min | Side-by-side comparison of 2 files |
+| `POST` | `/predict/stress` | 20/min | Biometric stress indicators |
+| `POST` | `/predict/url` | 10/min | Analyze audio from URL |
 
 ### Example — Single File
 
@@ -236,50 +241,76 @@ curl -X POST http://localhost:8000/predict \
   "features": 270,
   "processing_time_ms": 145.2,
   "filename": "sample.wav",
-  "model_version": "2.2.0",
+  "model_version": "2.3.0",
   "verdict_reason": "Flagged as synthetic. Key signal: MFCC-1 mean. Confidence 91%.",
   "top_features": [
-    { "name": "MFCC-1 mean (vocal tract shape)", "key": "mfcc_1_mean", "value": -14.2, "weight": 24.9 },
-    { "name": "MFCC-2 mean (spectral envelope)",  "key": "mfcc_2_mean", "value": 8.1,  "weight": 20.6 }
+    { "name": "MFCC-1 mean (vocal tract shape)", "key": "mfcc_1_mean", "value": -14.2, "weight": 24.9 }
   ]
 }
 ```
 
-### Example — Temporal Segments
+### Example — From URL
 
 ```bash
-curl -X POST http://localhost:8000/predict/segments \
-  -F "file=@sample.wav"
+curl -X POST "http://localhost:8000/predict/url?url=https://example.com/voice.wav"
 ```
 
-```json
-{
-  "segments": [
-    { "start_sec": 0.0, "end_sec": 1.0, "fake_score": 0.87, "real_score": 0.13 },
-    { "start_sec": 0.5, "end_sec": 1.5, "fake_score": 0.91, "real_score": 0.09 },
-    { "start_sec": 1.0, "end_sec": 2.0, "fake_score": 0.45, "real_score": 0.55 }
-  ],
-  "overall": { "label": "FAKE", "confidence": 0.91 }
-}
+---
+
+## 🧪 Running Tests
+
+```bash
+# Install test dependencies
+pip install pytest pytest-asyncio httpx
+
+# Train model first (required)
+python model/train.py
+
+# Run all tests
+pytest tests/ -v
+
+# Run with coverage
+pip install pytest-cov
+pytest tests/ -v --cov=api --cov=model --cov-report=term-missing
 ```
 
-Enables **partial deepfake detection** — identifies exactly which seconds of an audio clip are suspicious.
+---
+
+## 📊 Dataset
+
+| Mode | Command | Use case |
+|------|---------|----------|
+| Synthetic (default) | `python model/train.py` | Demo / development only |
+| ASVspoof 2019 LA | `python model/train.py --data_dir ./data/LA` | Research / production |
+
+The [ASVspoof 2019 LA](https://datashare.ed.ac.uk/handle/10283/3336) (logical access) partition contains genuine speech and 19 types of spoofed speech from TTS and voice conversion systems.
+
+> **Note:** Synthetic mode trains on idealized sine-wave signals. Accuracy figures from synthetic mode are NOT representative of real-world deepfake detection performance.
+
+---
+
+## ⚠️ Known Limitations
+
+| Limitation | Detail |
+|---|---|
+| Synthetic training | Default mode trains on idealized sine waves, not real TTS output |
+| Short clips | Clips under 0.5s are rejected; clips 0.5–1s may have lower accuracy |
+| Compression artifacts | Heavy MP3/AAC encoding can distort spectral features |
+| Language-agnostic | Model is not tuned per language — accuracy may vary |
+| No adversarial hardening | Pitch-shifting or noise injection can reduce detection accuracy |
+| In-memory stats | Session stats reset on server restart (no persistence) |
 
 ---
 
 ## 🎵 Supported Audio Formats
 
-VoiceGuard accepts **any audio format** via dual-loader strategy — Librosa for standard formats, Pydub + FFmpeg as fallback for everything else.
-
 `WAV` · `MP3` · `FLAC` · `OGG` · `M4A` · `AAC` · `OPUS` · `WMA` · `AIFF` · `WebM` · `MP4` · `3GP` · `CAF` · `AMR` · `GSM` · and more
 
-**Max file size:** 50 MB &nbsp;·&nbsp; **Max batch:** 10 files
+**Max file size:** 50 MB · **Max batch:** 10 files · **Min duration:** 0.5s
 
 ---
 
 ## 🧬 Voice Biometric Stress Analysis
-
-A 5-point breakdown comparing the voice against known human speech patterns:
 
 | Indicator | Human Voice | AI Voice |
 |-----------|------------|----------|
@@ -288,8 +319,6 @@ A 5-point breakdown comparing the voice against known human speech patterns:
 | Breath Patterns | High — pauses to breathe | Low — no breath pauses |
 | Micro Variations | High — tiny imperfections | Low — too clean |
 | Formant Stability | Low — natural shifts | High — artificially smooth |
-
-Combined into a single **Human Likeness Score (0–100%)**.
 
 ---
 
@@ -310,20 +339,19 @@ Combined into a single **Human Likeness Score (0–100%)**.
 - Real-time microphone stream detection
 - Mobile app (Android + iOS)
 - Browser extension for live call verification
+- SHAP-based per-prediction explainability (replacing static feature importance)
 
 **Medium term**
 - Clone Source Identification — detect which AI tool generated the voice
 - Voice Twin Detection — verify if two clips are from the same person
-- Deepfake Heatmap on spectrogram — red overlay on suspicious regions
 - Deep learning model (CNN / Transformer on raw waveform)
+- PostgreSQL for permanent analysis history
 
 **Long term**
 - Blockchain audio certificates — tamper-proof authenticity verification
 - WhatsApp / Telegram bot integration
 - Business API for banks, call centers, legal firms
-- Forensic PDF report for legal evidence
 - Adversarial robustness against compression, pitch-shift and noise attacks
-- PostgreSQL for permanent analysis history
 
 ---
 
@@ -331,11 +359,10 @@ Combined into a single **Human Likeness Score (0–100%)**.
 
 ```
 Python >= 3.10
-fastapi >= 0.110.0        uvicorn >= 0.29.0
-librosa >= 0.10.0         soundfile >= 0.12.1
-numpy >= 1.24.0           pydub >= 0.25.1
-scikit-learn >= 1.4.0     xgboost >= 2.0.0
-joblib >= 1.3.0           pydantic >= 2.0.0
+fastapi>=0.110.0      uvicorn>=0.29.0       slowapi>=0.1.9
+librosa>=0.10.0       soundfile>=0.12.1     numpy>=1.24.0
+pydub>=0.25.1         scikit-learn>=1.4.0   xgboost>=2.0.0
+joblib>=1.3.0         pydantic>=2.0.0
 ffmpeg (system — included in Docker)
 ```
 
@@ -349,10 +376,10 @@ MIT License — free to use, modify and distribute.
 
 <div align="center">
 
-**VoiceGuard v2.2** &nbsp;·&nbsp; MFCC · Spectral · Prosody · Ensemble ML
+**VoiceGuard v2.3** &nbsp;·&nbsp; MFCC · Spectral · Prosody · Ensemble ML
 
 *Protecting people from AI voice fraud — one audio file at a time.*
 
-Built at **AIML Hackathon 2025** in 24 hours.
+Built at **AIML Hackathon 2026** in 24 hours.
 
 </div>
