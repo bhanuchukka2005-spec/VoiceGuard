@@ -1,13 +1,11 @@
 """
-Feature extraction for audio deepfake detection — v2.2
-Fixes:
-  - load_audio() now falls back to pydub/ffmpeg for any format librosa can't open
-    directly (e.g. .wma, .opus, .3gp, .caf, .amr).  ffmpeg is already in the
-    Dockerfile so this costs zero extra dependencies.
-  - extract_prosody(): NaN-safe — returns zeros for silent/unvoiced clips instead
-    of crashing with "attempt to get argmax of an empty sequence".
-  - extract_mfcc(): safe for clips shorter than one FFT frame.
-  - FEATURE_NAMES kept in perfect sync with extract_all() output order.
+Feature extraction for audio deepfake detection — v2.3
+Changes from v2.2:
+  - load_audio() raises ValueError for silent clips (< 1e-4 peak amplitude)
+  - load_audio() raises ValueError for clips shorter than 0.5s
+  - predict_segments pads chunks to 1s (segment_samples) not 3s (DURATION)
+    — was biasing prosody / voiced_ratio with 2s of silence per segment
+  - All other fixes from v2.2 retained
 """
 
 import os
@@ -24,7 +22,8 @@ DURATION    = 3.0
 N_MFCC      = 40
 HOP_LENGTH  = 512
 N_FFT       = 2048
-MIN_SAMPLES = HOP_LENGTH * 2   # need at least 2 frames to compute anything
+MIN_SAMPLES = HOP_LENGTH * 2
+MIN_DURATION_SEC = 0.5   # clips shorter than this are rejected
 
 # ── Feature name list (must stay in sync with extract_all output order) ────────
 _MFCC_NAMES = (
@@ -42,7 +41,6 @@ _CHROMA_NAMES  = [f"chroma_{i}"   for i in range(12)] + \
 _PROSODY_NAMES = ["f0_mean", "f0_std", "f0_p10", "f0_p90", "voiced_ratio"]
 
 FEATURE_NAMES = _MFCC_NAMES + _SPEC_NAMES + _CHROMA_NAMES + _PROSODY_NAMES
-# Sanity check: 6×40 + 6 + 19 + 5 = 270
 assert len(FEATURE_NAMES) == 270, f"Feature count mismatch: {len(FEATURE_NAMES)}"
 
 
@@ -72,19 +70,33 @@ def load_audio(path: str) -> np.ndarray:
     """
     Load any audio file to a mono 16 kHz float32 array of exactly
     DURATION seconds (zero-padded or truncated).
-    Tries librosa first; falls back to pydub+ffmpeg for exotic formats.
+
+    Raises:
+        ValueError: if the clip is silent or shorter than MIN_DURATION_SEC.
     """
     try:
         y, _ = librosa.load(path, sr=SAMPLE_RATE, mono=True)
     except Exception:
-        # BUG FIX: librosa raises on .wma / .opus / .3gp / .amr etc.
-        # pydub delegates to ffmpeg which handles ~50+ formats.
         y = _load_via_pydub(path)
+
+    # ── Reject clips that are too short ───────────────────────────────────────
+    actual_duration = len(y) / SAMPLE_RATE
+    if actual_duration < MIN_DURATION_SEC:
+        raise ValueError(
+            f"Audio too short ({actual_duration:.2f}s). "
+            f"Minimum required: {MIN_DURATION_SEC}s"
+        )
+
+    # ── Reject silent / near-silent clips ─────────────────────────────────────
+    if np.abs(y).max() < 1e-4:
+        raise ValueError(
+            "Audio file appears to be silent or nearly silent. "
+            "Please upload a clip that contains speech."
+        )
 
     target = int(SAMPLE_RATE * DURATION)
     if len(y) == 0:
         y = np.zeros(target, dtype=np.float32)
-    # Pad short clips with zeros; truncate long clips
     y = np.pad(y, (0, max(0, target - len(y))))[:target]
     return y.astype(np.float32)
 
@@ -92,8 +104,6 @@ def load_audio(path: str) -> np.ndarray:
 # ── Feature extractors ─────────────────────────────────────────────────────────
 
 def extract_mfcc(y: np.ndarray) -> np.ndarray:
-    # BUG FIX: if clip is too short, librosa raises inside mfcc().
-    # Pad to at least 2 frames before processing.
     if len(y) < MIN_SAMPLES:
         y = np.pad(y, (0, MIN_SAMPLES - len(y)))
 
@@ -132,11 +142,6 @@ def extract_chroma(y: np.ndarray) -> np.ndarray:
 
 
 def extract_prosody(y: np.ndarray) -> np.ndarray:
-    """
-    BUG FIX: librosa.pyin() returns (None, None, None) for silent clips.
-    Also, f0[~np.isnan(f0)] can be empty → np.percentile crashes.
-    Now fully NaN-safe.
-    """
     if len(y) < MIN_SAMPLES:
         return np.zeros(5, dtype=np.float32)
 
@@ -147,10 +152,8 @@ def extract_prosody(y: np.ndarray) -> np.ndarray:
     except Exception:
         return np.zeros(5, dtype=np.float32)
 
-    # voiced_flag can be None (librosa bug on some platforms)
     voiced_ratio = float(voiced_flag.mean()) if voiced_flag is not None else 0.0
 
-    # f0 can be None or all-NaN for silence / unvoiced clips
     if f0 is None:
         return np.array([0.0, 0.0, 0.0, 0.0, voiced_ratio], dtype=np.float32)
 
@@ -177,7 +180,6 @@ def extract_all(path: str) -> np.ndarray:
         extract_prosody(y),
     ]).astype(np.float32)
 
-    # Final safety: replace any remaining NaN/Inf
     vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
     return vec
 
