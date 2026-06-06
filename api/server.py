@@ -1,15 +1,5 @@
 """
 FastAPI backend v2.3 — VoiceGuard
-Changes from v2.2:
-  - CORS locked down (whitelist instead of *)
-  - _stats protected by asyncio.Lock (thread-safe)
-  - /predict/url endpoint implemented
-  - Rate limiting via slowapi (30/min single, 10/min batch)
-  - bare except clauses now log warnings
-  - _inc_label made async, all callers updated
-  - /predict/stress _compute_stress moved to top-level (was inline)
-  - Added /predict/url for URL-based audio
-  - Healthcheck returns model_path in response for easier debugging
 """
 
 import os
@@ -33,8 +23,8 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
-# ── Fix import path so predict.py is always found ──────────────────────────────
-BASE_DIR = Path(__file__).resolve().parent.parent   # project root
+# Fix import path so predict.py is always found
+BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 sys.path.insert(0, str(BASE_DIR / "model"))
 
@@ -50,10 +40,10 @@ app = FastAPI(title="VoiceGuard API", version="2.3.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── CORS — lock down in production, open for local dev ────────────────────────
+# ── CORS ───────────────────────────────────────────────────────────────────────
 ALLOWED_ORIGINS = os.environ.get(
     "ALLOWED_ORIGINS",
-    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5500"
+    "http://localhost:8000,http://127.0.0.1:8000,http://localhost:5500",
 ).split(",")
 
 app.add_middleware(
@@ -70,6 +60,7 @@ _AUDIO_EXTENSIONS = {
     ".mp4", ".3gp", ".caf", ".gsm",
 }
 MAX_MB = 50
+
 
 def _is_audio(filename: str, content: bytes) -> bool:
     ext = Path(filename).suffix.lower()
@@ -91,12 +82,14 @@ def _is_audio(filename: str, content: bytes) -> bool:
 _stats: dict = {"total": 0, "fake": 0, "real": 0, "errors": 0}
 _stats_lock = asyncio.Lock()
 
+
 async def _inc_label(label: str):
     async with _stats_lock:
         key = label.lower()
         if key in _stats:
             _stats[key] += 1
         _stats["total"] += 1
+
 
 async def _inc_errors():
     async with _stats_lock:
@@ -106,40 +99,40 @@ async def _inc_errors():
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
 class FeatureContrib(BaseModel):
-    name:   str
-    key:    str
-    value:  float
+    name: str
+    key: str
+    value: float
     weight: float
 
 
 class PredictionResponse(BaseModel):
-    label:              str
-    confidence:         float
-    fake_score:         float
-    real_score:         float
-    features:           int
-    processing_time_ms: float
-    filename:           str
-    top_features:       List[FeatureContrib] = []
-    verdict_reason:     str = ""
-    model_version:      str = "2.3.0"
-
-
-class BatchItem(BaseModel):
-    filename:   str
-    label:      str
+    label: str
     confidence: float
     fake_score: float
     real_score: float
-    error:      str = ""
+    features: int
+    processing_time_ms: float
+    filename: str
+    top_features: List[FeatureContrib] = []
+    verdict_reason: str = ""
+    model_version: str = "2.3.0"
+
+
+class BatchItem(BaseModel):
+    filename: str
+    label: str
+    confidence: float
+    fake_score: float
+    real_score: float
+    error: str = ""
 
 
 class BatchResponse(BaseModel):
-    results:       List[BatchItem]
-    total_files:   int
-    fake_count:    int
-    real_count:    int
-    error_count:   int
+    results: List[BatchItem]
+    total_files: int
+    fake_count: int
+    real_count: int
+    error_count: int
     total_time_ms: float
 
 
@@ -163,7 +156,7 @@ async def _run_predict(tmp_path: str) -> dict:
     return await loop.run_in_executor(None, predict, tmp_path)
 
 
-async def _save_upload(file: UploadFile) -> tuple[bytes, str]:
+async def _save_upload(file: UploadFile) -> tuple:
     content = await file.read()
     size_mb = len(content) / (1024 * 1024)
     if size_mb > MAX_MB:
@@ -175,10 +168,7 @@ async def _save_upload(file: UploadFile) -> tuple[bytes, str]:
 
 
 def _compute_stress(audio_path: str) -> dict:
-    """
-    Derive 5 biometric stress indicators from audio features.
-    Uses already-extracted feature vector — no extra ML inference needed.
-    """
+    """Derive 5 biometric stress indicators from audio features."""
     import numpy as np
     from model.predict import _load
     from model.features import extract_with_names
@@ -209,11 +199,11 @@ def _compute_stress(audio_path: str) -> dict:
     formant_naturalness = float(np.clip(sb / max(sc, 1.0), 0.0, 1.0))
 
     return {
-        "pitch_stability":    round(pitch_stability,    3),
+        "pitch_stability": round(pitch_stability, 3),
         "rhythm_naturalness": round(rhythm_naturalness, 3),
-        "breath_patterns":    round(breath_patterns,    3),
-        "micro_variations":   round(micro_variations,   3),
-        "formant_stability":  round(formant_naturalness, 3),
+        "breath_patterns": round(breath_patterns, 3),
+        "micro_variations": round(micro_variations, 3),
+        "formant_stability": round(formant_naturalness, 3),
         "is_demo": False,
     }
 
@@ -223,13 +213,13 @@ def _compute_stress(audio_path: str) -> dict:
 @app.get("/health")
 async def health():
     model_path = BASE_DIR / "model" / "detector.joblib"
-    model_ok   = model_path.exists()
+    model_ok = model_path.exists()
     return JSONResponse(status_code=200, content={
-        "status":       "ok" if model_ok else "degraded",
+        "status": "ok" if model_ok else "degraded",
         "model_loaded": model_ok,
-        "model_path":   str(model_path),
-        "version":      "2.3.0",
-        "stats":        _stats,
+        "model_path": str(model_path),
+        "version": "2.3.0",
+        "stats": _stats,
     })
 
 
@@ -243,13 +233,13 @@ async def predict_single(request: Request, file: UploadFile = File(...)):
         raise HTTPException(
             400,
             "File does not appear to be audio. "
-            "Supported: wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, and more."
+            "Supported: wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, and more.",
         )
 
     try:
-        t0     = time.perf_counter()
+        t0 = time.perf_counter()
         result = await _run_predict(tmp_path)
-        ms     = (time.perf_counter() - t0) * 1000
+        ms = (time.perf_counter() - t0) * 1000
         await _inc_label(result["label"])
     except FileNotFoundError as exc:
         await _inc_errors()
@@ -269,15 +259,15 @@ async def predict_single(request: Request, file: UploadFile = File(...)):
 
     top_feats = result.get("top_features", [])
     return PredictionResponse(
-        label              = result["label"],
-        confidence         = result["confidence"],
-        fake_score         = result["fake_score"],
-        real_score         = result["real_score"],
-        features           = result["features"],
-        processing_time_ms = round(ms, 1),
-        filename           = file.filename or "unknown",
-        top_features       = [FeatureContrib(**f) for f in top_feats],
-        verdict_reason     = _verdict(result["label"], result["fake_score"], top_feats),
+        label=result["label"],
+        confidence=result["confidence"],
+        fake_score=result["fake_score"],
+        real_score=result["real_score"],
+        features=result["features"],
+        processing_time_ms=round(ms, 1),
+        filename=file.filename or "unknown",
+        top_features=[FeatureContrib(**f) for f in top_feats],
+        verdict_reason=_verdict(result["label"], result["fake_score"], top_feats),
     )
 
 
@@ -296,8 +286,11 @@ async def predict_batch(request: Request, files: List[UploadFile] = File(...)):
             content, tmp_path = await _save_upload(file)
         except HTTPException as exc:
             results.append(BatchItem(
-                filename=file.filename or "unknown", label="ERROR",
-                confidence=0, fake_score=0, real_score=0,
+                filename=file.filename or "unknown",
+                label="ERROR",
+                confidence=0,
+                fake_score=0,
+                real_score=0,
                 error=exc.detail,
             ))
             error_count += 1
@@ -310,8 +303,11 @@ async def predict_batch(request: Request, files: List[UploadFile] = File(...)):
             except OSError:
                 pass
             results.append(BatchItem(
-                filename=file.filename or "unknown", label="ERROR",
-                confidence=0, fake_score=0, real_score=0,
+                filename=file.filename or "unknown",
+                label="ERROR",
+                confidence=0,
+                fake_score=0,
+                real_score=0,
                 error="Not a recognised audio file",
             ))
             error_count += 1
@@ -321,11 +317,11 @@ async def predict_batch(request: Request, files: List[UploadFile] = File(...)):
         try:
             r = await _run_predict(tmp_path)
             results.append(BatchItem(
-                filename   = file.filename or "unknown",
-                label      = r["label"],
-                confidence = r["confidence"],
-                fake_score = r["fake_score"],
-                real_score = r["real_score"],
+                filename=file.filename or "unknown",
+                label=r["label"],
+                confidence=r["confidence"],
+                fake_score=r["fake_score"],
+                real_score=r["real_score"],
             ))
             if r["label"] == "FAKE":
                 fake_count += 1
@@ -335,8 +331,12 @@ async def predict_batch(request: Request, files: List[UploadFile] = File(...)):
         except Exception as exc:
             logger.warning("Batch item %s failed: %s", file.filename, exc)
             results.append(BatchItem(
-                filename=file.filename or "unknown", label="ERROR",
-                confidence=0, fake_score=0, real_score=0, error=str(exc),
+                filename=file.filename or "unknown",
+                label="ERROR",
+                confidence=0,
+                fake_score=0,
+                real_score=0,
+                error=str(exc),
             ))
             error_count += 1
             await _inc_errors()
@@ -347,12 +347,12 @@ async def predict_batch(request: Request, files: List[UploadFile] = File(...)):
                 pass
 
     return BatchResponse(
-        results       = results,
-        total_files   = len(files),
-        fake_count    = fake_count,
-        real_count    = real_count,
-        error_count   = error_count,
-        total_time_ms = round((time.perf_counter() - t_start) * 1000, 1),
+        results=results,
+        total_files=len(files),
+        fake_count=fake_count,
+        real_count=real_count,
+        error_count=error_count,
+        total_time_ms=round((time.perf_counter() - t_start) * 1000, 1),
     )
 
 
@@ -371,14 +371,14 @@ async def session_stats():
 @app.get("/model/info")
 async def model_info():
     return {
-        "model":          "SVM + GradientBoosting + XGBoost (soft-voting, v2)",
-        "features":       "270-dim: MFCC×delta×delta2 + spectral + chroma + prosody",
-        "input_formats":  "any audio file (wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, caf …)",
-        "max_file_mb":    MAX_MB,
+        "model": "SVM + GradientBoosting + XGBoost (soft-voting, v2)",
+        "features": "270-dim: MFCC×delta×delta2 + spectral + chroma + prosody",
+        "input_formats": "wav, mp3, flac, ogg, m4a, aac, opus, wma, aiff, webm, mp4, 3gp, caf …",
+        "max_file_mb": MAX_MB,
         "max_batch_size": 10,
         "explainability": "Top-5 feature contributions per prediction",
-        "dataset":        "ASVspoof 2019 LA / synthetic",
-        "version":        "2.3.0",
+        "dataset": "ASVspoof 2019 LA / synthetic",
+        "version": "2.3.0",
     }
 
 
@@ -431,19 +431,19 @@ async def predict_compare(
 
         try:
             t0 = time.perf_counter()
-            r  = await _run_predict(tmp_path)
+            r = await _run_predict(tmp_path)
             ms = (time.perf_counter() - t0) * 1000
             top_feats = r.get("top_features", [])
             results[label] = {
-                "label":              r["label"],
-                "confidence":         r["confidence"],
-                "fake_score":         r["fake_score"],
-                "real_score":         r["real_score"],
-                "features":           r["features"],
+                "label": r["label"],
+                "confidence": r["confidence"],
+                "fake_score": r["fake_score"],
+                "real_score": r["real_score"],
+                "features": r["features"],
                 "processing_time_ms": round(ms, 1),
-                "filename":           file.filename or "unknown",
-                "top_features":       top_feats,
-                "verdict_reason":     _verdict(r["label"], r["fake_score"], top_feats),
+                "filename": file.filename or "unknown",
+                "top_features": top_feats,
+                "verdict_reason": _verdict(r["label"], r["fake_score"], top_feats),
             }
             await _inc_label(r["label"])
         except Exception as exc:
@@ -469,9 +469,8 @@ async def predict_stress(request: Request, file: UploadFile = File(...)):
         raise HTTPException(400, "File does not appear to be audio.")
 
     try:
-        loop   = asyncio.get_event_loop()
+        loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _compute_stress, tmp_path)
-        await _inc_label("real")   # stress is informational — don't double-count, just bump total
     except Exception as exc:
         await _inc_errors()
         logger.exception("Stress analysis error on %s", file.filename)
@@ -487,7 +486,10 @@ async def predict_stress(request: Request, file: UploadFile = File(...)):
 
 @app.post("/predict/url")
 @limiter.limit("10/minute")
-async def predict_from_url(request: Request, url: str = Query(..., description="Direct URL to an audio file")):
+async def predict_from_url(
+    request: Request,
+    url: str = Query(..., description="Direct URL to an audio file"),
+):
     """Fetch audio from a URL and run deepfake detection."""
     if not url.startswith(("http://", "https://")):
         raise HTTPException(400, "URL must start with http:// or https://")
@@ -515,22 +517,22 @@ async def predict_from_url(request: Request, url: str = Query(..., description="
         if size_mb > MAX_MB:
             raise HTTPException(413, f"Remote file too large ({size_mb:.1f} MB). Max: {MAX_MB} MB")
 
-        t0     = time.perf_counter()
+        t0 = time.perf_counter()
         result = await _run_predict(tmp_path)
-        ms     = (time.perf_counter() - t0) * 1000
+        ms = (time.perf_counter() - t0) * 1000
         await _inc_label(result["label"])
 
         top_feats = result.get("top_features", [])
         return PredictionResponse(
-            label              = result["label"],
-            confidence         = result["confidence"],
-            fake_score         = result["fake_score"],
-            real_score         = result["real_score"],
-            features           = result["features"],
-            processing_time_ms = round(ms, 1),
-            filename           = url.split("/")[-1].split("?")[0] or "remote_audio",
-            top_features       = [FeatureContrib(**f) for f in top_feats],
-            verdict_reason     = _verdict(result["label"], result["fake_score"], top_feats),
+            label=result["label"],
+            confidence=result["confidence"],
+            fake_score=result["fake_score"],
+            real_score=result["real_score"],
+            features=result["features"],
+            processing_time_ms=round(ms, 1),
+            filename=url.split("/")[-1].split("?")[0] or "remote_audio",
+            top_features=[FeatureContrib(**f) for f in top_feats],
+            verdict_reason=_verdict(result["label"], result["fake_score"], top_feats),
         )
     except HTTPException:
         raise
