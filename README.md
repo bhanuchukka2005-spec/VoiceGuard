@@ -2,7 +2,7 @@
 
 > **AI-powered audio forensics platform** that detects synthetic and cloned voices using a 270-feature ML pipeline with temporal analysis, biometric stress scoring, and explainable AI.
 
-[![CI](https://github.com/your-team/voiceguard/actions/workflows/ci.yml/badge.svg)](https://github.com/your-team/voiceguard/actions/workflows/ci.yml)
+[![VoiceGuard CI](https://github.com/bhanuchukka2005-spec/VoiceGuard/actions/workflows/ci.yml/badge.svg)](https://github.com/bhanuchukka2005-spec/VoiceGuard/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/Python-3.10+-blue?style=flat-square&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.110+-green?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
 [![XGBoost](https://img.shields.io/badge/XGBoost-2.0+-orange?style=flat-square)](https://xgboost.readthedocs.io)
