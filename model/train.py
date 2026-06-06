@@ -5,43 +5,46 @@ Train the deepfake audio classifier — v2.3
 with feature importance tracking for explainability.
 
 IMPORTANT — synthetic mode warning
-===================================
+====================================
 When run without --data_dir, this script generates idealized sine-wave
 signals as training data. The "real" voices are multi-harmonic sine waves
 and the "fake" voices are clean sine waves with minimal noise. These are
-trivially separable by any linear classifier and bear little resemblance
-to real TTS / neural vocoder output.
+trivially separable and bear little resemblance to real TTS / neural
+vocoder output.
 
-Accuracy metrics printed in synthetic mode are NOT indicative of
-real-world deepfake detection performance. Always use --data_dir with
-the ASVspoof 2019 LA partition for any production or research use.
+Accuracy metrics in synthetic mode are NOT indicative of real-world
+deepfake detection performance. Always use --data_dir with the ASVspoof
+2019 LA partition for any production or research use.
 
 Usage:
-  python train.py                        # synthetic demo mode (NOT for production)
-  python train.py --data_dir ./data/LA   # real ASVspoof 2019 LA data (recommended)
+  python train.py                        # synthetic demo (NOT for production)
+  python train.py --data_dir ./data/LA   # ASVspoof 2019 LA (recommended)
 """
 
 import os
 import sys
 import argparse
+import tempfile
 import numpy as np
 import joblib
 import json
 import warnings
+
 warnings.filterwarnings("ignore")
 
-from sklearn.svm import SVC
-from sklearn.ensemble import GradientBoostingClassifier, VotingClassifier
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
-from xgboost import XGBClassifier
+# sklearn / xgboost imports must come after warnings.filterwarnings
+from sklearn.svm import SVC  # noqa: E402
+from sklearn.ensemble import GradientBoostingClassifier, VotingClassifier  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
+from sklearn.model_selection import train_test_split  # noqa: E402
+from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix  # noqa: E402
+from xgboost import XGBClassifier  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(__file__))
-from features import extract_all, SAMPLE_RATE, FEATURE_NAMES
+from features import extract_all, SAMPLE_RATE, FEATURE_NAMES  # noqa: E402
 
-MODEL_PATH      = os.path.join(os.path.dirname(__file__), "detector.joblib")
-SCALER_PATH     = os.path.join(os.path.dirname(__file__), "scaler.joblib")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "detector.joblib")
+SCALER_PATH = os.path.join(os.path.dirname(__file__), "scaler.joblib")
 IMPORTANCE_PATH = os.path.join(os.path.dirname(__file__), "feature_importance.json")
 
 _SYNTHETIC_WARNING = """
@@ -59,10 +62,10 @@ _SYNTHETIC_WARNING = """
 """
 
 
-# ─── Synthetic data ───────────────────────────────────────────────────────────
+# ── Synthetic data ─────────────────────────────────────────────────────────────
 
 def make_real_voice(n_samples, rng):
-    import tempfile, soundfile as sf
+    import soundfile as sf
     paths = []
     sr = SAMPLE_RATE
     t = np.linspace(0, 3.0, int(sr * 3.0))
@@ -81,7 +84,7 @@ def make_real_voice(n_samples, rng):
 
 
 def make_fake_voice(n_samples, rng):
-    import tempfile, soundfile as sf
+    import soundfile as sf
     paths = []
     sr = SAMPLE_RATE
     t = np.linspace(0, 3.0, int(sr * 3.0))
@@ -104,7 +107,7 @@ def build_synthetic_dataset(n_per_class=200):
     return make_real_voice(n_per_class, rng), make_fake_voice(n_per_class, rng)
 
 
-# ─── Real data loader ─────────────────────────────────────────────────────────
+# ── Real data loader ───────────────────────────────────────────────────────────
 
 def load_asvspoof(data_dir):
     real_paths, fake_paths = [], []
@@ -123,7 +126,7 @@ def load_asvspoof(data_dir):
     return real_paths, fake_paths
 
 
-# ─── Feature extraction ───────────────────────────────────────────────────────
+# ── Feature extraction ─────────────────────────────────────────────────────────
 
 def build_features(real_paths, fake_paths):
     print("[INFO] Extracting features...")
@@ -145,32 +148,32 @@ def build_features(real_paths, fake_paths):
     return np.array(X, dtype=np.float32), np.array(y)
 
 
-# ─── Model ────────────────────────────────────────────────────────────────────
+# ── Model ──────────────────────────────────────────────────────────────────────
 
 def build_model():
     """3-model soft-voting ensemble: SVM + GBC + XGBoost"""
     svm = SVC(kernel="rbf", C=10, gamma="scale", probability=True, random_state=42)
     gbc = GradientBoostingClassifier(
         n_estimators=300, max_depth=4, learning_rate=0.05,
-        subsample=0.8, random_state=42
+        subsample=0.8, random_state=42,
     )
     xgb = XGBClassifier(
         n_estimators=300, max_depth=5, learning_rate=0.05,
         subsample=0.8, colsample_bytree=0.8,
         eval_metric="logloss",
-        random_state=42, verbosity=0
+        random_state=42, verbosity=0,
     )
     return VotingClassifier(
         estimators=[("svm", svm), ("gbc", gbc), ("xgb", xgb)],
         voting="soft",
-        weights=[1, 2, 2]
+        weights=[1, 2, 2],
     )
 
 
 def compute_feature_importance(model, feature_names):
     """Extract feature importance from GBC and XGB sub-models."""
     importances = {}
-    for name, clf in model.named_estimators_.items():
+    for _name, clf in model.named_estimators_.items():
         if hasattr(clf, "feature_importances_"):
             for fname, imp in zip(feature_names, clf.feature_importances_):
                 importances[fname] = importances.get(fname, 0) + float(imp)
@@ -180,7 +183,7 @@ def compute_feature_importance(model, feature_names):
     return top10
 
 
-# ─── Train ────────────────────────────────────────────────────────────────────
+# ── Train ──────────────────────────────────────────────────────────────────────
 
 def train(data_dir=None):
     if data_dir:
@@ -189,16 +192,18 @@ def train(data_dir=None):
         real_paths, fake_paths = build_synthetic_dataset(200)
 
     X, y = build_features(real_paths, fake_paths)
-    print(f"[INFO] Dataset: {X.shape[0]} samples, {X.shape[1]} features | "
-          f"real={sum(y==0)}, fake={sum(y==1)}")
+    print(
+        f"[INFO] Dataset: {X.shape[0]} samples, {X.shape[1]} features | "
+        f"real={sum(y == 0)}, fake={sum(y == 1)}"
+    )
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, stratify=y, random_state=42
+        X, y, test_size=0.2, stratify=y, random_state=42,
     )
 
     scaler = StandardScaler()
     X_train_s = scaler.fit_transform(X_train)
-    X_test_s  = scaler.transform(X_test)
+    X_test_s = scaler.transform(X_test)
 
     print("[INFO] Training 3-model ensemble (SVM + GBC + XGBoost)...")
     model = build_model()
@@ -206,8 +211,8 @@ def train(data_dir=None):
 
     y_pred = model.predict(X_test_s)
     y_prob = model.predict_proba(X_test_s)[:, 1]
-    auc    = roc_auc_score(y_test, y_prob)
-    cm     = confusion_matrix(y_test, y_pred)
+    auc = roc_auc_score(y_test, y_prob)
+    cm = confusion_matrix(y_test, y_pred)
 
     print("\n─── Evaluation ───────────────────────────────────────")
     print(classification_report(y_test, y_pred, target_names=["Real", "Fake"]))
@@ -223,7 +228,7 @@ def train(data_dir=None):
     for k, v in fi.items():
         print(f"  {k:<35} {v:.4f}")
 
-    joblib.dump(model,  MODEL_PATH)
+    joblib.dump(model, MODEL_PATH)
     joblib.dump(scaler, SCALER_PATH)
     with open(IMPORTANCE_PATH, "w") as f:
         json.dump(fi, f, indent=2)
@@ -234,8 +239,10 @@ def train(data_dir=None):
 
     if not data_dir:
         for p in real_paths + fake_paths:
-            try: os.unlink(p)
-            except: pass
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
 
     return model, scaler
 
@@ -248,11 +255,11 @@ if __name__ == "__main__":
 Examples:
   python train.py                        # synthetic demo (NOT for production)
   python train.py --data_dir ./data/LA   # ASVspoof 2019 LA (recommended)
-        """
+        """,
     )
     parser.add_argument(
         "--data_dir", default=None,
-        help="Path to directory with real/ and fake/ subfolders of audio files"
+        help="Path to directory with real/ and fake/ subfolders of audio files",
     )
     args = parser.parse_args()
     train(args.data_dir)
