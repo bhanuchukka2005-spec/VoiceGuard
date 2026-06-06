@@ -1,22 +1,27 @@
 """
-Inference module v2.2 — VoiceGuard
-Fixes:
-  - MODEL_PATH / SCALER_PATH resolved from this file's location (not CWD)
-  - _load() called once per process via module-level guard (thread-safe with lock)
-  - Missing scaler.joblib no longer crashes — raises clear 503-able error
-  - top_features safely returns [] when importance file absent
-  - extract_with_names import corrected (was silently ignored if features.py not on sys.path)
+Inference module v2.3 — VoiceGuard
+Changes from v2.2:
+  - predict_segments: chunks now padded to segment_samples (1s), not DURATION (3s)
+    — the 3s pad was filling 2/3 of every chunk with silence, biasing voiced_ratio
+    and prosody features toward artificial values.
+  - ValueError (silent / too-short clips) now propagates cleanly to the API layer
+    which returns HTTP 422 instead of 500.
+  - Segment fallback logs a warning instead of silently swallowing the exception.
+  - All v2.2 fixes retained.
 """
 
 import os
 import sys
 import json
 import threading
+import logging
 import numpy as np
 import joblib
 import warnings
 
 warnings.filterwarnings("ignore")
+
+logger = logging.getLogger("voiceguard.predict")
 
 # ── Path resolution ────────────────────────────────────────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -38,10 +43,10 @@ _importance = None
 def _load():
     global _model, _scaler, _importance
     if _model is not None:
-        return   # already loaded
+        return
     with _lock:
         if _model is not None:
-            return  # double-checked locking
+            return
         if not os.path.exists(MODEL_PATH):
             raise FileNotFoundError(
                 f"Model not found at {MODEL_PATH}. "
@@ -58,7 +63,7 @@ def _load():
             with open(IMPORTANCE_PATH) as f:
                 _importance = json.load(f)
         else:
-            _importance = {}   # BUG FIX: was None, caused TypeError later
+            _importance = {}
 
 
 # ── Human-readable feature labels ─────────────────────────────────────────────
@@ -85,23 +90,24 @@ _READABLE = {
 def predict(audio_path: str) -> dict:
     """
     Run inference on an audio file.
+
     Returns dict with label, confidence, fake_score, real_score,
     features (count), and top_features list.
+
+    Raises:
+        FileNotFoundError: model or scaler not trained yet.
+        ValueError: clip is silent or too short (from features.load_audio).
     """
     _load()
 
-    # Extract features
     vec, named = extract_with_names(audio_path)
 
-    # BUG FIX: check for NaN/Inf in feature vector (can happen with very short clips)
     if not np.isfinite(vec).all():
         vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
 
     vec_s  = _scaler.transform(vec.reshape(1, -1))
     proba  = _model.predict_proba(vec_s)[0]
 
-    # BUG FIX: predict_proba order depends on model.classes_.
-    # Always look up which index corresponds to class 1 (fake).
     classes    = list(_model.classes_)
     fake_idx   = classes.index(1) if 1 in classes else 1
     real_idx   = classes.index(0) if 0 in classes else 0
@@ -111,7 +117,6 @@ def predict(audio_path: str) -> dict:
     label      = "FAKE" if fake_prob > 0.5 else "REAL"
     confidence = max(real_prob, fake_prob)
 
-    # Top-5 contributing features for explainability
     top_features = []
     if _importance:
         for fname, imp in list(_importance.items())[:5]:
@@ -134,16 +139,23 @@ def predict(audio_path: str) -> dict:
 
 def predict_segments(audio_path: str, segment_duration: float = 1.0) -> dict:
     """
-    Run inference on overlapping segments of the audio file.
+    Run inference on overlapping 1-second segments of the audio file.
     Returns per-segment confidence scores for temporal analysis.
-    Uses 1-second windows with 50% overlap for better accuracy.
+
+    FIX (v2.3): chunks are now padded to `segment_samples` (1s), not
+    `target_len` (3s). The previous 3-second padding added 2 full seconds
+    of silence to every segment window, artificially depressing voiced_ratio
+    and prosody features — making every segment look slightly more "fake"
+    than it really is.
     """
     _load()
 
     import librosa
-    from features import SAMPLE_RATE, extract_mfcc, extract_spectral, extract_chroma, extract_prosody
+    from features import (
+        SAMPLE_RATE, extract_mfcc, extract_spectral,
+        extract_chroma, extract_prosody,
+    )
 
-    # Load full audio
     try:
         y, sr = librosa.load(audio_path, sr=SAMPLE_RATE, mono=True)
     except Exception:
@@ -157,34 +169,29 @@ def predict_segments(audio_path: str, segment_duration: float = 1.0) -> dict:
     if len(y) == 0:
         return {"segments": [], "overall": predict(audio_path)}
 
-    # Use 1s windows — short enough for temporal resolution,
-    # long enough for MFCC / prosody to be meaningful
     segment_samples = int(segment_duration * sr)
-    hop_samples = segment_samples // 2  # 50% overlap for smooth curve
+    hop_samples     = segment_samples // 2   # 50% overlap
 
-    # Need at least 2 frames for any feature to work
     min_viable = 2048
-    target_len = int(SAMPLE_RATE * 3.0)  # pad to match training length
 
-    classes = list(_model.classes_)
+    classes  = list(_model.classes_)
     fake_idx = classes.index(1) if 1 in classes else 1
 
     segments = []
-    pos = 0
-    prev_fake = None  # for smoothing
+    pos      = 0
+    prev_fake = None
 
     while pos < len(y):
-        end = min(pos + segment_samples, len(y))
+        end   = min(pos + segment_samples, len(y))
         chunk = y[pos:end].copy()
 
-        # Skip truly empty chunks
         if len(chunk) < min_viable or np.abs(chunk).max() < 1e-6:
             pos += hop_samples
             continue
 
-        # Pad chunk to training length so all feature extractors work correctly
-        chunk_padded = np.zeros(target_len, dtype=np.float32)
-        chunk_padded[:min(len(chunk), target_len)] = chunk[:min(len(chunk), target_len)]
+        # ── FIX: pad to 1 second only (segment_samples), not 3 seconds ───────
+        chunk_padded = np.zeros(segment_samples, dtype=np.float32)
+        chunk_padded[:len(chunk)] = chunk
 
         try:
             vec = np.concatenate([
@@ -194,12 +201,11 @@ def predict_segments(audio_path: str, segment_duration: float = 1.0) -> dict:
                 extract_prosody(chunk_padded),
             ]).astype(np.float32)
 
-            # Replace NaN/Inf before scaling
             if not np.isfinite(vec).all():
                 vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
 
-            vec_s = _scaler.transform(vec.reshape(1, -1))
-            proba = _model.predict_proba(vec_s)[0]
+            vec_s     = _scaler.transform(vec.reshape(1, -1))
+            proba     = _model.predict_proba(vec_s)[0]
             fake_prob = float(proba[fake_idx])
 
             # Exponential smoothing to reduce jitter between segments
@@ -207,8 +213,8 @@ def predict_segments(audio_path: str, segment_duration: float = 1.0) -> dict:
                 fake_prob = 0.65 * fake_prob + 0.35 * prev_fake
             prev_fake = fake_prob
 
-        except Exception as e:
-            # Use previous value or 0.5 fallback
+        except Exception as exc:
+            logger.warning("Segment %s–%s failed: %s", pos, end, exc)
             fake_prob = prev_fake if prev_fake is not None else 0.5
 
         segments.append({
